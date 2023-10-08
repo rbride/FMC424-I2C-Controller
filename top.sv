@@ -2,9 +2,9 @@
 `default_nettype none
 //////////////////////////////////////////////////////////////////////////////////
 // Engineer: Ryan Bride 
-// Create Date: 09/04/2023 11:58:18 AM
+// Create Date: 08/05/2023
 // Module Name: fmc_i2c_controller
-// Target Devices:FPGA Connected to FMC424 Board 
+// Target Devices: Ultrascale RFSOC FPGA Connected to FMC424 Board 
 // Description: 
 //      Master I2C Controller that Connects to and controls FMC424 add on board
 // Revision 1 - Initial Design  
