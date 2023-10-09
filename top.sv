@@ -22,14 +22,14 @@ module fmc_i2c_controller(
 //3 Wires used for SCL and SDA
 wire scl_in, scl_out, scl_t;
 wire sda_in, sda_out, sda_t;
-//Create I/O Buffer For SCL PIN
+//Create I/O Buffer For SCL Pin
 IOBUF scl_buf(
     .O(scl_out),
     .I(scl_in),
     .IO(SCL_PIN),
     .T(scl_t)
 );
-//Create I/O Buffer 
+//Create I/O Buffer for SDA Pin
 IOBUF sda_buf(
     .O(sda_out),
     .I(sda_in),
