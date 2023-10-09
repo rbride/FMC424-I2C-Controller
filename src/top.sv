@@ -20,8 +20,11 @@ module fmc_i2c_controller(
 );
 
 //3 Wires used for SCL and SDA
-wire scl_in, scl_out, scl_t;
+wire scl_in = 1'b1;
+wire scl_out;
+reg  scl_t = 1'b1;
 wire sda_in, sda_out, sda_t;
+
 //Create I/O Buffer For SCL Pin
 IOBUF scl_buf(
     .O(scl_out),
@@ -29,13 +32,22 @@ IOBUF scl_buf(
     .IO(SCL_PIN),
     .T(scl_t)
 );
+
 //Create I/O Buffer for SDA Pin
-IOBUF sda_buf(
-    .O(sda_out),
-    .I(sda_in),
-    .IO(SDA_PIN),
-    .T(sda_t)
+//IOBUF sda_buf(
+//    .O(sda_out),
+//    .I(sda_in),
+//    .IO(SDA_PIN),
+//    .T(sda_t)
+//);
+
+
+clk_gen scl_400khz(
+            .CLK(CLK),
+            .scl_t(scl_t)
 );
+
+assign SCL_PIN = scl_t ? 1'bZ : 1'b0;
 
 
 //CLPD Address
@@ -52,20 +64,16 @@ localparam [2:0]
     TURN_ON_LED                     =   3'b110,
     TURN_OFF_LED                    =   3'b111;
 
-reg [2:0]  
 
-//State Machine    
-always *@ begin
+// //State Machine    
+// always *@ begin
 
-end
+// end
 
-//
-always @(posedge CLK)begin
+// //
+// always @(posedge CLK)begin
 
-end
-
-
-
+// end
 
 
 endmodule

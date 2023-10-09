@@ -16,31 +16,30 @@
 //  I------|>>----+---[I/O PIN]
 //                |
 //  O-----<<|-----+
-
 module clk_gen(
     input wire CLK,         
-    input wire scl_out,
-    input wire scl_t,
-    inout wire SCL_PIN
+    output wire scl_t
 );
-reg en_t;
-reg [8:0] cnt = 9'b0;
 
-// 156.25 = 6.4ns CLK period
-// 900ns/6.4ns = 140.625 Rising edges   1600ns/6.4ns = 250
-// 250 = 0xFA   140 = 0x8D  MSB=1 Low Counter, MSB=0 High Counter 0xFA-1 = 0xF9
+reg [7:0] cnt = 8'b0;
+reg scl_t_reg;
+// 156.25 = 6.4ns CLK period  900ns/6.4ns = 140.625 Rising edges   1600ns/6.4ns = 250
+// 250 = 0xFA   140 = 0x8D/2  MSB=1 Low Counter, MSB=0 High Counter 0xFA-1 = 0xF9 
+// Divide both by two round, Low period is 0x7C (124), High Period is 0x46 (70)
 always @(posedge CLK) begin
-    if( cnt && {1'b1, 8'hF9}) begin
-        en_t <= 1'b0;   //Low
-        cnt = {1'b0, 8'h00};
-    end else if(cnt && {0'b0, 8'h8D}) begin
-        en_t <= 1'b1;   //High
-        cnt = {1'b1, 8'h00};
-    end else begin
-        cnt <= cnt+1'b1;
+        if( cnt == {1'b0, 7'h7C}) begin
+            cnt <= {1'b1, 7'h00};   //Flip Signal Bit High,Reset Counter
+    
+        end else if(cnt == {1'b1, 7'h46}) begin
+            cnt <= {1'b0, 7'h00};   //Flip Signal Bit Low, Reset Counter
+            
+        end else begin
+            cnt <= cnt + 1'b1;
+        end
+        
     end
-end
 
-assign SCL_PIN = en_t ? 1'bZ : 1'b0;
+//Assign The Signal Bit the Tristate enable Wire. 
+assign scl_t = cnt[7];
 
 endmodule
