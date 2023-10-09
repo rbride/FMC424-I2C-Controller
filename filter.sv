@@ -1,13 +1,9 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
 // Engineer: Ryan Bride 
-// Simple Filter Based off of following
-// Frequency  N     filter time (ns)
-//  60        3         50
-//  80        4         50 
-//  100       5         50
-//  150       7         47
-//  200       10        50
+// Creation Date: 08/08/2023
+// Module Name: FMC424 I2C Noise Filter
+// Target Device: Ultrascale RFSOC FPGA connected to FMC424 Board
 //////////////////////////////////////////////////////////////////////////////////
 // https://www.latticesemi.com/-/media/LatticeSemi/Documents/WhitePapers/HM/ImprovingNoiseImmunityforSerialInterface.ashx?document_id=50728
 //require a ~50ns glitch filter time for i2c. See doc above for basically this circuit
