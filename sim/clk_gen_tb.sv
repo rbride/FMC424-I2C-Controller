@@ -10,7 +10,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb;
-    parameter PERIOD = 0.064; //6.4ns or 6400ps
+    parameter PERIOD = 0.032; //6.4ns or 6400ps
     logic clk;  
     logic scl_t;  
     logic SCL_PIN;
