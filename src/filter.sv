@@ -5,21 +5,23 @@
 // Creation Date: 08/08/2023
 // Module Name: FMC424 I2C Noise Filter
 // Target Device: Ultrascale RFSOC FPGA connected to FMC424 Board
+// Description: 
+//    Simple Noise/ Glitch Filter to create stable SCL and SDA inputs to the FSM
 //////////////////////////////////////////////////////////////////////////////////
 // https://www.latticesemi.com/-/media/LatticeSemi/Documents/WhitePapers/HM/ImprovingNoiseImmunityforSerialInterface.ashx?document_id=50728
-//require a ~50ns glitch filter time for i2c. See doc above for basically this circuit
-//Will set n to 7 and use the pre-existing 156.25Mhz and will result in a 47~ NS filter time
+// require a ~50ns glitch filter time for i2c. See doc above for basically this circuit
+// Will set n to 7 and use the pre-existing 156.25Mhz and will result in a 47~ NS filter time
 module ff_filter#(
-    parameter n = 7
+    parameter STAGES = 7
 )(
-    input clk;
-    input in;
-    output reg out;
+    input wire clk,
+    input wire _in,
+    output reg _out
 );
-reg [n-1:0] shift_reg;
+reg [STAGES-1:0] shift_reg;
 always @(posedge clk) begin
-  shift_reg <= {shift_reg[n-2:0], in};  // shift register for input in.
-  if      (&shift_reg)  out <= 1'b1;    // & = reduction AND
-  else if (~|shift_reg) out <= 1'b0;    // ~| = reduction NOR
+  shift_reg <= {shift_reg[STAGES-2:0], _in};  // shift register for input in.
+  if      (&shift_reg)  _out <= 1'b1;    // & = reduction AND
+  else if (~|shift_reg) _out <= 1'b0;    // ~| = reduction NOR
 end
 endmodule
