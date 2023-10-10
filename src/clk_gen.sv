@@ -12,23 +12,26 @@
 //////////////////////////////////
 ///  Standard 400KHz Clk Ver.  ///
 //////////////////////////////////
+// Same as Below, actually generates a 400.641026Khz Clock, can slow to 398.596939
+// if you change C2 to C3, chose the faster because its closer, and assume it wouldn't matter
 module clk_gen_std(
     input wire CLK, //156.25MHz
     output wire scl_t
 );
 
-reg [9:0] cnt = 10'b1_000_000_000;
+reg [8:0] cnt = 9'b1_000_000_000;
 
 always @(posedge CLK) begin
-    if(cnt[8:0] == 8'h186 ) 
-        cnt <= {!cnt[9], 9'b000_000_000};
+    if(cnt[7:0] == 8'hC2 ) 
+        cnt <= {(~cnt[8]), 8'b0000_0000};
     else
         cnt <= cnt + 1'b1;
 end
 
-assign scl_t = cnt[9];
+assign scl_t = cnt[8];
 
 endmodule
+
 //////////////////////////////////
 /// Non Std Duty Cycle Version ///
 //////////////////////////////////
