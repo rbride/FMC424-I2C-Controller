@@ -14,7 +14,7 @@
 //////////////////////////////////
 // Same as Below, actually generates a 400.641026Khz Clock, can slow to 398.596939
 // if you change C2 to C3, chose the faster because its closer, and assume it wouldn't matter
-module clk_gen_std(
+module clk_gen_std_400k(
     input wire CLK, //156.25MHz
     output wire scl_t
 );
@@ -39,7 +39,7 @@ endmodule
 // 250 = 0xFA   140 = 0x8C  MSB=0 Low Counter, MSB=1 High Counter 0xFA-1 = 0xF9 gives perfect sim result 
 // 140 results in more time high, .9024ns. and 399.616369KHz clk, 139 results in less .896ns, and 400.641026Khz, 
 // Faster was chosen and assumed the Repeater would filter it out.
-module clk_gen_sft(
+module clk_gen_sft_400k(
     input wire CLK,         
     output wire scl_t
 );
@@ -60,5 +60,29 @@ end
 
     //Assign The Signal Bit the Tristate enable Wire. 
 assign scl_t = cnt[8];
+
+endmodule
+
+//After Contact with Abaco, the CLPD on the Board has been revealed to not support Fast mode and only support
+//100KHz, I am only going to make the standard duty cycle 100Khz One as of now
+//////////////////////////////////
+///  Standard 100KHz Clk Ver.  ///
+//////////////////////////////////
+//50/50 dudty means 5000ns up 5000ns down. 5000/6.4 = 781.25 = 0x30D
+//0x30E generates 99.7765006Khz clk, 0x30D generates 102.257853
+module clk_gen_std_100k(
+    input wire CLK,
+    output wire scl_t
+);
+//Start on
+reg [10:0] cnt = 11'b1_00000_00000;
+always @(posedge CLK) begin
+    if(cnt[9:0] == 10'h30E)
+        cnt <= {(~cnt[10]), 10'b00000_00000};
+    else
+        cnt <= cnt + 1'b1;
+end 
+
+assign scl_t = cnt[10];
 
 endmodule
