@@ -21,7 +21,9 @@ module ff_filter#(
 reg [STAGES-1:0] shift_reg;
 always @(posedge clk) begin
   shift_reg <= {shift_reg[STAGES-2:0], _in};  // shift register for input in.
-  if      (&shift_reg)  _out <= 1'b1;    // & = reduction AND
-  else if (~|shift_reg) _out <= 1'b0;    // ~| = reduction NOR
+  if      (&shift_reg) // & = reduction AND
+    _out <= 1'b1;    
+  else if (~|shift_reg) // ~| = reduction NOR
+    _out <= 1'b0;    
 end
 endmodule
