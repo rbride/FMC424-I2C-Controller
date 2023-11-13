@@ -39,17 +39,19 @@ always @* begin
     case(state_reg);
         
         IDLE: begin
-            if(en) 
-                state_next = START;
+            if(en) begin
+                //Wait til both SCL and SDA are high, then got to start
+                //Not using a multi-master bus so it should always be good to go.
+                if( (sda_in != 1'b0) && (scl_in != 1'b0) ) begin
+                    state_next = START;
+                end
+            end
+
             else 
                 state_next = IDLE;
         end
 
-        START_UP: begin
-            //Ensure That Both SDA and SCL are High before sending Start
-            //Not using a multi-master bus so it should always be good to go.
-            if( (sda_in != 1'b0) && ()   )            
-            
+        START: begin
             
         end  
 
@@ -64,8 +66,6 @@ end
 // """Processor""" that steps the registers for the state machine and performs Actions necessary 
 always @(posedge clk) begin
     state_reg <= state_next;
-
-
 
 end
 
