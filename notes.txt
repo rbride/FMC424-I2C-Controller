@@ -1,7 +1,10 @@
+https://github.dev/manojvishy/I2C_Project/blob/master/i2c_master.v
+https://www.fullchipdesign.com/tristate.htm
+
 Order of operations for i2c.
 
 First the master Issues the "START" command:
-    - Start is sent by bringing SDA line low, while the SCL line is high,
+    - Start is sent by bringing SDA lineState low, while the SCL line is high,
     - After that the Master controls and SCL line and generates the Clock Signals
 
 
