@@ -58,7 +58,7 @@ always @(posedge CLK) begin
     end
 end
 
-    //Assign The Signal Bit the Tristate enable Wire. 
+//Assign The Signal Bit the Tristate enable Wire. 
 assign scl_t = cnt[8];
 
 endmodule

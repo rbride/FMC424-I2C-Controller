@@ -22,6 +22,10 @@ module fmc_i2c_controller(
     output wire sda_out,
 );
 
+//Connections to Other Modules
+wire clk_gen_en;
+
+
 localparam [2:0]
     IDLE                            =   3'b000,
     START_UP                        =   3'b001,
@@ -39,12 +43,17 @@ reg [2:0] state_next;
 //Storage Regs
 reg sda_o_reg = 1'b0; sda_o_next;
 reg scl_t_reg = 1'b0; scl_t_next; 
+reg scl_i_reg = 1'b1; scl_i_next;
+reg sda_i_reg = 1'b1; sda_i_next;
+reg en_clkgen_reg = 1'b0; en_clkgen_next; 
+
 
 //Currently we do this because for some reason this is not the Design top
 //Idk as the design nears completion I will likely make it the top because why not who cares.
 assign sda_out = sda_o_reg;
 assign scl_t = scl_t_reg;
 
+assign clk_gen_en = en_clkgen_reg;
 
 //State Machine / Combinational Logic
 always @* begin
@@ -65,7 +74,9 @@ always @* begin
 
         //So First We have to Send SDA to low, 
         START: begin
-            
+            sda_o_next = 1'b0 //Bring It down
+
+            state_next  
         end  
 
         
@@ -78,9 +89,24 @@ always @* begin
 
 end
 
+//Second State Machine that Does the simple task of controlling flags for 
+//Indicating if we have a rising edge or falling edge of the SCL
+
+
 // """Processor""" that steps the registers for the state machine and performs Actions necessary 
 always @(posedge clk) begin
     state_reg <= state_next;
+    sda_o_reg <= sda_o_next;
+    scl_t_reg <= scl_o_next;
+
+    //Set the Storage register for SCL In from Port and SDA in from Port to Port Val
+    scl_i_reg <= scl_in;
+    sda_i_reg <= sda_in;    
+
+    en_clkgen_reg <= en_clkgen_next;
+
+
+
 
 end
 
