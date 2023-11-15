@@ -10,14 +10,16 @@
 //////////////////////////////////////////////////////////////////////////////////
 
 module tb;
-    parameter PERIOD = 0.032; //6.4ns or 6400ps
+    parameter PERIOD = 0.064; //6.4ns or 6400ps
     logic clk;  
     logic scl_t;  
+  	logic enable; 
     logic SCL_PIN;
     
     //Clock Gen Instance
-    clk_gen uut(
+    clk_gen_std_100k uut(
             .CLK(clk),
+      		.en(enable),
             .scl_t(scl_t)
     );
     
@@ -32,11 +34,22 @@ module tb;
     end
     
     initial begin
-        scl_t = 0;
         clk = 0;
+      	enable = 1;      
+      	scl_t = 0;
+      
+        #5;
+        enable = 0;
         
-        //Takes 390 clk cycles to generate one 400khz clk clock period, 6.4ns*400 = 2560
-        #640;  // 2560 * 25 = 64000. move decimal over ->640
+        #5;
+        enable = 1;
+        
+        #500;
+        #500;
+        enable = 0;
+        
+        #20;
+        enable = 1;
     end
     
     

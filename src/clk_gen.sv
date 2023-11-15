@@ -72,22 +72,32 @@ endmodule
 //0x30E generates 99.7765006Khz clk, 0x30D generates 102.257853
 module clk_gen_std_100k(
     input wire CLK,
-    input wire rst, //Reset is called during start, and we want to start low
+    input wire en, //Reset is called during start, and we want to start low
     output wire scl_t
-)
-//Start o
+);
+//Start With 0ff 
+reg en_last = 1'b0; 
 reg [10:0] cnt = 11'b1_00000_00000;
+  
 always @(posedge CLK) begin
-    if (rst == 1'b1) begin
-        //Starts off to correspond with the Way our start bit send works
-        //Fires on start bit adds delay 
-        cnt <= cnt = 11'b0_00000_00000;   
+    if (en != 1) begin
+      	if(en_last) begin
+            cnt[10] <= 1'b0; //We should just need to set the first bit not all 
+        end else begin 
+            //The CLK gen is off we are inbetween sends of for some other reason we don't need it
+            //At the moment, Idk this is trial and error.
+            cnt <= 11'b0_00000_00000;
+        end
     end else begin
         if(cnt[9:0] == 10'h30E)
             cnt <= {(~cnt[10]), 10'b00000_00000};
         else
             cnt <= cnt + 1'b1;
     end
+
+    //Set en_last so that it resets so every time we turn on and off we reset the entire register
+    en_last <= en;
+
 end 
 
 assign scl_t = cnt[10];

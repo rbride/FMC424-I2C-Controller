@@ -9,6 +9,8 @@
 //      Master I2C Controller that Connects to and controls FMC424 add on board
 // Revision 1 - Initial Design  
 //////////////////////////////////////////////////////////////////////////////////
+// IN Is the The Tri-State Buffers input to the Design
+// Out is the Designs Output to the Tri-state buffer. 
 module fmc_i2c_controller(
     input wire CLK,
     input wire en,
@@ -34,6 +36,16 @@ localparam [2:0]
 reg [2:0] state_reg = START_UP;
 reg [2:0] state_next;
 
+//Storage Regs
+reg sda_o_reg = 1'b0; sda_o_next;
+reg scl_t_reg = 1'b0; scl_t_next; 
+
+//Currently we do this because for some reason this is not the Design top
+//Idk as the design nears completion I will likely make it the top because why not who cares.
+assign sda_out = sda_o_reg;
+assign scl_t = scl_t_reg;
+
+
 //State Machine / Combinational Logic
 always @* begin
     case(state_reg);
@@ -51,9 +63,12 @@ always @* begin
                 state_next = IDLE;
         end
 
+        //So First We have to Send SDA to low, 
         START: begin
             
         end  
+
+        
 
 
 
