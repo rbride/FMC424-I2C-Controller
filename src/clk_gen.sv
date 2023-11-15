@@ -68,19 +68,26 @@ endmodule
 //////////////////////////////////
 ///  Standard 100KHz Clk Ver.  ///
 //////////////////////////////////
-//50/50 dudty means 5000ns up 5000ns down. 5000/6.4 = 781.25 = 0x30D
+//50/50 duty means 5000ns up 5000ns down. 5000/6.4 = 781.25 = 0x30D
 //0x30E generates 99.7765006Khz clk, 0x30D generates 102.257853
 module clk_gen_std_100k(
     input wire CLK,
+    input wire rst, //Reset is called during start, and we want to start low
     output wire scl_t
-);
-//Start on
+)
+//Start o
 reg [10:0] cnt = 11'b1_00000_00000;
 always @(posedge CLK) begin
-    if(cnt[9:0] == 10'h30E)
-        cnt <= {(~cnt[10]), 10'b00000_00000};
-    else
-        cnt <= cnt + 1'b1;
+    if (rst == 1'b1) begin
+        //Starts off to correspond with the Way our start bit send works
+        //Fires on start bit adds delay 
+        cnt <= cnt = 11'b0_00000_00000;   
+    end else begin
+        if(cnt[9:0] == 10'h30E)
+            cnt <= {(~cnt[10]), 10'b00000_00000};
+        else
+            cnt <= cnt + 1'b1;
+    end
 end 
 
 assign scl_t = cnt[10];
