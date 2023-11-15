@@ -75,7 +75,14 @@ always @* begin
         //So First We have to Send SDA to low, 
         START: begin
             sda_o_next = 1'b0 //Bring It down
-
+            //next turn on the clk generator so that it will go low after like half a period
+            //then transition to the next state where I wait for a posedge / pulse of SCL
+            //on that pulse start sending the ADDR
+            //After sending, hold low and wait for a ack
+            // then send data.. 
+            ######
+            #TODO#
+            ######
             state_next  
         end  
 
@@ -103,7 +110,7 @@ always @(posedge clk) begin
     scl_i_reg <= scl_in;
     sda_i_reg <= sda_in;    
 
-    en_clkgen_reg <= en_clkgen_next;
+    en_clkgen_reg <= en_clkgen_next;\
 
 
 
