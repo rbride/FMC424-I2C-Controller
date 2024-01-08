@@ -13,59 +13,80 @@
 // Out is the Designs Output to the Tri-state buffer. 
 module fmc_i2c_controller(
     input wire CLK,
-    input wire en,
-    input wire scl_in,
+    input wire scl_pin_val,
+    input wire sda_pin_val,
     output wire scl_t,
-    output wire scl_out,
-    input wire sda_in,
     output wire sda_t,
-    output wire sda_out,
+    output wire scl_write,
+    output wire sda_write,
+    output wire clkgen_rst
 );
 
-//Connections to Other Modules
-wire clk_gen_en;
-
-
+//State, well states 
 localparam [2:0]
     IDLE                            =   3'b000,
     START_UP                        =   3'b001,
-    START                           =   3'b010,
-    BUS_WAIT                        =   3'b011,
-    CLPD_ADDRESS_W                  =   3'b100,
-    CLPD_ADDRESS_R                  =   3'b101,
-    ACC_CLPD_CTRL_REG0              =   3'b110,
-    //TURN_ON_LED                     =   3'b110,
-    TURN_OFF_LED                    =   3'b111;
+    IDK1                            =   3'b010,
+    IDK11                           =   3'b011,
+    IDK2                            =   3'b100,
+    IDK122                          =   3'b101,
+    IDK33                           =   3'b110,
+    IDK77                           =   3'b111;
 
-reg [2:0] state_reg = START_UP;
-reg [2:0] state_next;
+//Storage Regs and nets fed to regs from comb logic
+reg [2:0] state_reg; 
+logic [2:0] state_next;
+reg scl_write_reg; sda_write_reg; scl_t_reg; sda_t_reg; en_clk_gen_reg;
+logic scl_write_reg_next; en_clkgen_next; scl_t_reg_next; sda_t_reg_next; sda_write_reg_next
 
-//Storage Regs
-reg sda_o_reg = 1'b0; sda_o_next;
-reg scl_t_reg = 1'b0; scl_t_next; 
-reg scl_i_reg = 1'b1; scl_i_next;
-reg sda_i_reg = 1'b1; sda_i_next;
-reg en_clkgen_reg = 1'b0; en_clkgen_next; 
+assign scl_t        = scl_t_reg;
+assign sda_t        = sda_t_reg;
+assign scl_write    = scl_write_reg;
+assign sda_write    = sda_write_reg;
+assign clkgen_rst   = clkgen_rst_reg;
 
+// After contemplating spending time constructing a reset circuit, this is an FPGA 
+// so we are using Initial block, cuz I got time for that
+initial begin
+    state_reg       <= IDLE; 
+    scl_t_reg       <= 1'b0;    scl_t_next      <= 1'b0; 
+    sda_t_reg       <= 1'b0;    sda_t_next      <= 1'b0;
+    scl_write_reg   <= 1'b0;    scl_write_next  <= 1'b0;
+    sda_write_reg   <= 1'b0;    sda_write_next  <= 1'b0;
+    en_clk_gen_reg  <= 1'b0;    en_clkgen_next  <= 1'b0;
+end
 
-//Currently we do this because for some reason this is not the Design top
-//Idk as the design nears completion I will likely make it the top because why not who cares.
-assign sda_out = sda_o_reg;
-assign scl_t = scl_t_reg;
+// Reset and register storage / procedural logic to coincide with the FSM logic
+always_ff @(posedge clk, posedge reset) begin
+    //Initial Values
+    if(reset) begin
+        state_reg       <= IDLE; 
+        scl_t_reg       <= 1'b0;    scl_t_next       <= 1'b0; 
+        sda_t_reg       <= 1'b0;    sda_t_next       <= 1'b0;
+        scl_write_reg   <= 1'b0;    scl_write_next   <= 1'b0;
+        sda_write_reg   <= 1'b0;    sda_write_next   <= 1'b0;
+        clkgen_rst_reg  <= 1'b0;    clkgen_rst_next  <= 1'b0;
+    end 
 
-assign clk_gen_en = en_clkgen_reg;
+    else begin         
+        state_reg       <= state_next;
+        scl_t_reg       <= scl_t_next;
+        sda_t_reg       <= sda_t_next;
+        scl_write_reg   <= scl_write_next;
+        sda_write_reg   <= sda_write_next;
+        clkgen_rst_reg  <= clkgen_rst_next;
+    end
+end
 
 //State Machine / Combinational Logic
-always @* begin
+always_comb begin
     case(state_reg);
         
         IDLE: begin
-            if(en) begin
-                //Wait til both SCL and SDA are high, then got to start
-                //Not using a multi-master bus so it should always be good to go.
-                if( (sda_in != 1'b0) && (scl_in != 1'b0) ) begin
-                    state_next = START;
-                end
+            //Wait til both SCL and SDA are high, then got to start
+            //Not using a multi-master bus so it should always be good to go.
+            if( (sda_in != 1'b0) && (scl_in != 1'b0) ) begin
+                state_next = START;
             end
 
             else 
@@ -96,21 +117,6 @@ always @* begin
 
 end
 
-//Second State Machine that Does the simple task of controlling flags for 
-//Indicating if we have a rising edge or falling edge of the SCL
-
-
-// """Processor""" that steps the registers for the state machine and performs Actions necessary 
-always @(posedge clk) begin
-    state_reg <= state_next;
-    sda_o_reg <= sda_o_next;
-    scl_t_reg <= scl_o_next;
-
-    //Set the Storage register for SCL In from Port and SDA in from Port to Port Val
-    scl_i_reg <= scl_in;
-    sda_i_reg <= sda_in;    
-
-    en_clkgen_reg <= en_clkgen_next;\
 
 
 
