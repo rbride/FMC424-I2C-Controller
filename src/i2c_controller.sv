@@ -13,13 +13,8 @@
 // Out is the Designs Output to the Tri-state buffer. 
 module fmc_i2c_controller(
     input wire CLK,
-    input wire scl_pin_val,
-    input wire sda_pin_val,
-    output wire scl_t,
-    output wire sda_t,
-    output wire scl_write,
-    output wire sda_write,
-    output wire clkgen_rst
+    inout wire SCL_PIN,
+    inout wire SDA_PIN
 );
 
 //State, well states 
@@ -33,6 +28,12 @@ localparam [2:0]
     IDK33                           =   3'b110,
     IDK77                           =   3'b111;
 
+//Wires  i is the output of Circuit onto Pin, O is the read of the pin. t is the toggle
+wire scl_i; scl_o; scl_t;
+wire sda_i; sda_o; sda_t;
+wire clkgen_rst;
+
+
 //Storage Regs and nets fed to regs from comb logic
 reg [2:0] state_reg; 
 logic [2:0] state_next;
@@ -40,10 +41,11 @@ reg scl_write_reg; sda_write_reg; scl_t_reg; sda_t_reg; en_clk_gen_reg;
 logic scl_write_reg_next; en_clkgen_next; scl_t_reg_next; sda_t_reg_next; sda_write_reg_next
 
 assign scl_t        = scl_t_reg;
+assign scl_i        = scl_write_reg;
 assign sda_t        = sda_t_reg;
-assign scl_write    = scl_write_reg;
-assign sda_write    = sda_write_reg;
+assign sda_i        = sda_write_reg;
 assign clkgen_rst   = clkgen_rst_reg;
+
 
 // After contemplating spending time constructing a reset circuit, this is an FPGA 
 // so we are using Initial block, cuz I got time for that
@@ -62,13 +64,7 @@ always_ff @(posedge clk, posedge reset) begin
     if(reset) begin
         state_reg       <= IDLE; 
         scl_t_reg       <= 1'b0;    scl_t_next       <= 1'b0; 
-        sda_t_reg       <= 1'b0;    sda_t_next       <= 1'b0;
-        scl_write_reg   <= 1'b0;    scl_write_next   <= 1'b0;
-        sda_write_reg   <= 1'b0;    sda_write_next   <= 1'b0;
-        clkgen_rst_reg  <= 1'b0;    clkgen_rst_next  <= 1'b0;
     end 
-
-    else begin         
         state_reg       <= state_next;
         scl_t_reg       <= scl_t_next;
         sda_t_reg       <= sda_t_next;
@@ -81,21 +77,30 @@ end
 //State Machine / Combinational Logic
 always_comb begin
     case(state_reg);
-        
+
+        /** You get to Idle either after we finish everything or at the very beggining
+        * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Sig
+        * We are not using a multi-master bus so there should be few issues with this */        
         IDLE: begin
             //Wait til both SCL and SDA are high, then got to start
             //Not using a multi-master bus so it should always be good to go.
-            if( (sda_in != 1'b0) && (scl_in != 1'b0) ) begin
+            if( (scl_pin_val != 1'b0) && (sda_pin_val != 1'b0) ) begin
                 state_next = START;
             end
-
             else 
                 state_next = IDLE;
         end
 
-        //So First We have to Send SDA to low, 
-        START: begin
-            sda_o_next = 1'b0 //Bring It down
+        /** Set _t's to '1' so that "I" is put onto the IO, Reset the clk gen so it creates a 100KHz wave, starting high
+         *  where we need it. Set next state to wait for SCL low, then send address bits followed by R or W */  
+        START: begin    
+            sda_t_next      = 1'b1;   //Write the writes to the Pins
+            scl_t_next      = 1'b1;
+            sda_write_next  = 1'b0;   //Set SDA Low
+            
+
+
+
             //next turn on the clk generator so that it will go low after like half a period
             //then transition to the next state where I wait for a posedge / pulse of SCL
             //on that pulse start sending the ADDR

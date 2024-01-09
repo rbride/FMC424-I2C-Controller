@@ -17,23 +17,21 @@
 module clk_gen_std_100k(
     input wire CLK,
     input wire rst,
-    output wire scl_i;  // used for "O" port of IO_Buf
+    output wire scl_t;  // used for "O" port of IO_Buf
 );
 
-reg en_last = 1'b0;
 reg [12:0] cnt = 13'b1_00000_00000;
-
 //if clk related issues try a syncronous clk this is async for literally no reason  
 always_ff @(posedge CLK) begin
     if(rst) begin
         cnt <= {1'b1, 12'h000};     //Reset to Start High to math logic 
     end else if(cnt[11:0] == 12'h9C4) begin
         cnt <= {(~cnt[12]), 12'h000}; //When Reaches value, Reset Counter and Flip highest bit
-    end else
+    end else begin
         cnt <= cnt+1'b1;
     end
 end
 
-assign scl_i = cnt[12];
+assign scl_t = cnt[12];
 
 endmodule
