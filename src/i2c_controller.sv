@@ -29,22 +29,38 @@ localparam [2:0]
     IDK77                           =   3'b111;
 
 //Wires  i is the output of Circuit onto Pin, O is the read of the pin. t is the toggle
-wire scl_i; scl_o; scl_t;
+wire scl_i; scl_o; scl_t; scl_read_filter;
 wire sda_i; sda_o; sda_t;
 wire clkgen_rst;
-
 
 //Storage Regs and nets fed to regs from comb logic
 reg [2:0] state_reg; 
 logic [2:0] state_next;
-reg scl_write_reg; sda_write_reg; scl_t_reg; sda_t_reg; en_clk_gen_reg;
-logic scl_write_reg_next; en_clkgen_next; scl_t_reg_next; sda_t_reg_next; sda_write_reg_next
+reg sda_write_reg; sda_t_reg;       logic sda_t_next; sda_write_next
+reg scl_t_reg;                      logic scl_t_next;
+reg rst_clkgen_reg;                 logic rst_clkgen_next
 
 assign scl_t        = scl_t_reg;
-assign scl_i        = scl_write_reg;
+//assign scl_i        = scl_write_reg;
 assign sda_t        = sda_t_reg;
 assign sda_i        = sda_write_reg;
-assign clkgen_rst   = clkgen_rst_reg;
+assign clkgen_rst   = rst_clkgen_reg;
+
+//Instanciate and Connect 100KHz Module. Will flip .scl_i every 100KHz. 
+clk_gen_std_100k SCL_CLK_GEN( .CLK(CLK), .rst(clkgen_rst), scl_i(scl_i))
+
+// Glitch/Noise Filter use to filter the SCL signal read/used by the State machine should be around 50ns (ish)
+ff_filter #(STAGES=2) scl_filter( .clk(CLK), ._in(SCL_PIN), ._out(scl_read_filter) );
+
+// Assign Tri States pins 
+// IOBUF
+//      T -|
+//         |
+//  I------|>>----+---[I/O PIN]
+//                |
+//  O-----<<|-----+
+assign SCL_PIN = scl_t ? 1'bZ : scl_i; //SCL is either high Z or output of Clk Gen
+assign SDA_PIN = sda_t ? 1'bZ : sda_i; //SDA is either high Z or Output of State Machine
 
 
 // After contemplating spending time constructing a reset circuit, this is an FPGA 
@@ -53,9 +69,9 @@ initial begin
     state_reg       <= IDLE; 
     scl_t_reg       <= 1'b0;    scl_t_next      <= 1'b0; 
     sda_t_reg       <= 1'b0;    sda_t_next      <= 1'b0;
-    scl_write_reg   <= 1'b0;    scl_write_next  <= 1'b0;
+    //scl_write_reg   <= 1'b0;    scl_write_next  <= 1'b0;
     sda_write_reg   <= 1'b0;    sda_write_next  <= 1'b0;
-    en_clk_gen_reg  <= 1'b0;    en_clkgen_next  <= 1'b0;
+    en_clk_gen_reg  <= 1'b1;    rst_clkgen_next  <= 1'b1;
 end
 
 // Reset and register storage / procedural logic to coincide with the FSM logic
@@ -68,15 +84,15 @@ always_ff @(posedge clk, posedge reset) begin
         state_reg       <= state_next;
         scl_t_reg       <= scl_t_next;
         sda_t_reg       <= sda_t_next;
-        scl_write_reg   <= scl_write_next;
+        //scl_write_reg   <= scl_write_next;
         sda_write_reg   <= sda_write_next;
-        clkgen_rst_reg  <= clkgen_rst_next;
+        rst_clkgen_reg  <= clkgen_rst_next;
     end
 end
 
 //State Machine / Combinational Logic
 always_comb begin
-    case(state_reg);
+    case(state_reg)
 
         /** You get to Idle either after we finish everything or at the very beggining
         * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Sig
@@ -95,21 +111,11 @@ always_comb begin
          *  where we need it. Set next state to wait for SCL low, then send address bits followed by R or W */  
         START: begin    
             sda_t_next      = 1'b1;   //Write the writes to the Pins
-            scl_t_next      = 1'b1;
+            scl_t_next      = 1'b1;   //Output CLK Gen onto IO pin 
             sda_write_next  = 1'b0;   //Set SDA Low
+            clkgen_rst_next = 1'b0;   //Reset, reset fires on low
             
-
-
-
-            //next turn on the clk generator so that it will go low after like half a period
-            //then transition to the next state where I wait for a posedge / pulse of SCL
-            //on that pulse start sending the ADDR
-            //After sending, hold low and wait for a ack
-            // then send data.. 
-            ######
-            #TODO#
-            ######
-            state_next  
+            state_next = 
         end  
 
         

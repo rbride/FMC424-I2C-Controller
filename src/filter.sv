@@ -10,7 +10,7 @@
 //////////////////////////////////////////////////////////////////////////////////
 // https://www.latticesemi.com/-/media/LatticeSemi/Documents/WhitePapers/HM/ImprovingNoiseImmunityforSerialInterface.ashx?document_id=50728
 // require a ~50ns glitch filter time for i2c. See doc above for basically this circuit
-// Will set n to 7 and use the pre-existing 156.25Mhz and will result in a 47~ NS filter time
+// Will set n to 2 and will should result in the proper filter of 50ns with the 50MHz base clk
 module ff_filter#(
     parameter STAGES = 7
 )(
