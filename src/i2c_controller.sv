@@ -75,7 +75,7 @@ ff_filter #(STAGES=2) scl_filter( .clk(CLK), ._in(scl_o), ._out(scl_read_filter)
 // After contemplating spending time constructing a reset circuit, this is an FPGA 
 // so we are using Initial block, cuz I got time for that
 initial begin
-    state_reg       <= IDLE;            phy_state_reg   <= IDLE;
+    state_reg       <= IDLE;            phy_state_reg   <= BOTH_LINES_RELEASED;
     scl_t_reg       <= 1'b0;            scl_t_next      <= 1'b0; 
     sda_t_reg       <= 1'b0;            sda_t_next      <= 1'b0;
     //scl_write_reg   <= 1'b0;          scl_write_next  <= 1'b0;
@@ -93,14 +93,14 @@ always_ff @(posedge clk, posedge reset) begin
     //Initial Values
     if(reset) begin
         state_reg       <=  IDLE;    
-        phy_state_reg   <=  IDLE;
+        phy_state_reg   <=  BOTH_LINES_RELEASED;
         scl_t_reg       <=  1'b0;    //scl_t_next       <= 1'b0; 
         w_cnt           <=  3'b111;  //w_cnt_next       <= 3'b111;
     end else begin
         state_reg       <=  state_next;
         scl_t_reg       <=  scl_t_next;
         sda_t_reg       <=  sda_t_next;
-        //scl_write_reg   <= scl_write_next;
+        //scl_write_reg   <=  scl_write_next;
         sda_write_reg   <=  sda_write_next;
         rst_clkgen_reg  <=  clkgen_rst_next;
         w_cnt           <=  w_cnt_next;
@@ -121,10 +121,13 @@ always_comb begin
             //Wait til both SCL and SDA are high, then got to start
             //Not using a multi-master bus so it should always be good to go.
             if( (scl_pin_val != 1'b0) && (sda_pin_val != 1'b0) ) begin
-                state_next = START_SEND;
+                state_next      = START_SEND;
+                phy_state_next  = BOTH_LINES_RELEASED; 
             end
-            else 
-                state_next = IDLE;
+            else begin 
+                state_next      = IDLE;
+                phy_state_next  = BOTH_LINES_RELEASED;
+            end
         end
 
         /** Set _t's to '1' so that "I" is put onto the IO, Reset the clk gen so it creates a 100KHz wave, starting high
@@ -136,6 +139,7 @@ always_comb begin
             clkgen_rst_next = 1'b0;   //Reset, reset fires on low
             state_next      = ADDR_CLPD;    
             state_last_next = START_SEND;
+            phy_state_next  = START_SCL_STILL_HIGH
         end  
 
         /** First, turn of the reset on the CLK Gen, then wait for the first time for SCL to go low
@@ -225,8 +229,36 @@ end
 *   after being low so that we know its time to send the next Address/Data bit over the SDA line */
 always_comb begin
     case(phy_state_reg)
+        /** 
+        *   
+        *   */
+        BOTH_LINES_RELEASED : begin
 
+        end
 
+        /** 
+        *   
+        *   */
+        START_SCL_STILL_HIGH : begin
+        
+        end
+        
+        /** 
+        *   
+        *   */
+        SCL_TRANS_HIGH_TO_LOW : begin
+        
+         
+        end
+
+        /** 
+        *   
+        *   */ 
+        SCL_TRANS_LOW_TO_HIGH : begin
+        
+        end
+
+    endcase
 end
 
 endmodule
