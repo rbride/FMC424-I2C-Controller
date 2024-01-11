@@ -26,29 +26,29 @@ localparam [2:0]
     IDLE                    =   3'b000,
     START_SEND              =   3'b001,
     ADDR_CLPD               =   3'b010,
-    ADDR_LED_REG            =   3'b011,
+    ADDR_CNTR_REG           =   3'b011,
     TURN_ON_LED4            =   3'b100,
-    WAIT_FOR_ACK            =   3'b101,
-    IDK33                   =   3'b110,
-    IDK77                   =   3'b111;
+    WRITE_TO                =   3'b101,
+    READ_FROM               =   3'b110,
+    WAIT_FOR_ACK            =   3'b111;
 
 //Wires  i is the output of Circuit onto Pin, O is the read of the pin. t is the toggle
 wire scl_read_filter;
 wire clkgen_rst;
 
 //Storage Regs and nets fed to regs from comb logic
-reg [2:0] state_reg;                logic [2:0] state_next;
-reg [2:0] state_last;               logic [2:0] state_last_next; // Kinda a funny name, used for ack
-reg [2:0] w_cnt;                    logic [2:0] w_cnt_next       // Counter Used and Decremented inside the state machine
-
-reg sda_write_reg; sda_t_reg;       logic sda_t_next; sda_write_next
-reg scl_t_reg;                      logic scl_t_next;
-reg rst_clkgen_reg;                 logic rst_clkgen_next
+reg [2:0] state_reg;        logic [2:0] state_next;
+reg [2:0] state_last;       logic [2:0] state_last_next; // Kinda a funny name, used for ack
+reg [2:0] w_cnt;            logic [2:0] w_cnt_next       // Counter Used and Decremented inside the state machine
+reg sda_write_reg;          logic sda_write_next;
+reg sda_t_reg;              logic sda_t_next; 
+reg scl_t_reg;              logic scl_t_next;
+reg rst_clkgen_reg;         logic rst_clkgen_next
+reg scl_read_last;          logic scl_read_last_next;    //This name is so goofy I actually laughed 
 //Addresses needed To send last two bits of CLPD Addr are a guess based of the doc, change if doesn't work
 reg [6:0] CLPD_ADDR         = 7'b01111_10;      
 reg [7:0] CLPD_CTRL_REG     = 8'b0000_0010;     // 0x02
 reg [7:0] CLPD_LED4_ON      = 8'b0000_0001;     //Such a waste of mem 
-
 
 assign scl_t        = scl_t_reg;
 //assign scl_i        = scl_write_reg;
@@ -93,6 +93,7 @@ always_ff @(posedge clk, posedge reset) begin
         rst_clkgen_reg  <= clkgen_rst_next;
         w_cnt           <= w_cnt_next;
         state_last      <= state_last_next;
+        scl_read_last   <= scl_read_last_next;
 
     end
 end
@@ -104,7 +105,7 @@ always_comb begin
         /** You get to Idle either after we finish everything or at the very beggining
         * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Sig
         * We are not using a multi-master bus so there should be few issues with this */        
-        IDLE: begin
+        IDLE : begin
             //Wait til both SCL and SDA are high, then got to start
             //Not using a multi-master bus so it should always be good to go.
             if( (scl_pin_val != 1'b0) && (sda_pin_val != 1'b0) ) begin
@@ -116,7 +117,7 @@ always_comb begin
 
         /** Set _t's to '1' so that "I" is put onto the IO, Reset the clk gen so it creates a 100KHz wave, starting high
          *  where we need it. Set next state to wait for SCL low, then send address bits followed by R or W */  
-        START_SEND: begin    
+        START_SEND : begin    
             sda_t_next      = 1'b1;   //Write the writes to the Pins
             scl_t_next      = 1'b1;   //Output CLK Gen onto IO pin 
             sda_write_next  = 1'b0;   //Set SDA Low
@@ -125,12 +126,81 @@ always_comb begin
             state_last_next = START_SEND;
         end  
 
-         /** First  */    
-        ADDR_CLPD: begin
+        /** First, turn of the reset on the CLK Gen, then wait for the first time for SCL to go low
+        *   When SCL goes low set the first bit, decrement the counter. It goes high then goes low again,      
+        *   Send next bit, until all bits are sent, then put in Write state after setting last state */       
+        ADDR_CLPD : begin
+            if(rst_clkgen_reg) begin
+                rst_clkgen_next = 1'b1;         //Stop CLK Reset so count starts
+                state_next      = ADDR_CLPD;    //Return to Same state
+                w_cnt_next      = 3'b111;       //Propably Redundant but no reason not to be sure
+            //Since we reset the clock high we know that when we hit this, SCL is High and use this in its own case
+            //to avoid more SCL value change logic above
+            end else if (w_cnt = 3'b111) begin
+                if(scl_read_filter)
+                    state_next = ADDR_CLPD;     //Wait for it to go low
+                else begin
+                    sda_write_next      = CLPD_ADDR[w_cnt];
+                    state_next          = ADDR_CLPD;
+                    w_cnt_next          = 3'b110;
+                    scl_read_last_next  = 1'b0;
+                end
+            //Reduction or so as long as its not all 0
+            end else if ( |w_cnt ) begin 
+                //Should hit first, i.e. SCL is still low so check if both still 0
+                if((scl_read_filter == 1'b0) && (scl_read_last == 1'b0)) 
+                    state_next = ADDR_CLPD;
+                //SCL changed to high and scl last low
+                else if((scl_read_filter == 1'b1) && (scl_read_last == 1'b0)) begin
+                    state_next = ADDR_CLPD;
+                    scl_read_last_next = 1'b1;
+                end
+                //SCL changed back to Low, so now its time to send next bit
+                else if((scl_read_filter == 1'b0) && (scl_read_last == 1'b0)) begin
+                    scl_read_last_next  = 1'b0;
+                    sda_write_next      = CLPD_ADDR[w_cnt];
+                    w_cnt_next          = w_cnt - 1;
+                    state_next          = ADDR_CLPD;
+                end
+            //Only case left is w_cnt is all 0
+            end else begin
 
+
+            end
+        end
+
+        /** 
+        *   
+        *   */
+        ADDR_CNTR_REG : begin
 
         end
-        
+
+        /** 
+        *   
+        *   */
+        TURN_ON_LED4 : begin
+
+        end
+
+        /** Simple State, just adds the Write indiciator after the end of address 
+        *   This state does not affect the last state because that is literally just used for the ACK State */
+        WRITE_TO : begin
+
+        end 
+
+        /** Simple State, justs adds the Read indicator after the end of address 
+        *   This state does not affect the last state because that is literally just used for the ACK State */
+        READ_FROM : begin
+
+        end 
+
+        /** 
+        *   
+        *   */
+        WAIT_FOR_ACK : begin
+
+        end 
 
         DEFAULT:    // You probably shouldn't be here  
     endcase
