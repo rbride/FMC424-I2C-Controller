@@ -31,6 +31,15 @@ localparam [2:0]
     WRITE_TO                =   3'b101,
     READ_FROM               =   3'b110,
     WAIT_FOR_ACK            =   3'b111;
+//Physical State States
+localparam [2:0]
+    BOTH_LINES_RELEASED     =   3'b000,
+    START_SCL_STILL_HIGH    =   3'b001,
+    SCL_TRANS_HIGH_TO_LOW   =   3'b010,
+    SCL_TRANS_LOW_TO_HIGH   =   3'b011,
+    ACK_ACK                 =   3'b100;
+
+
 
 //Wires  i is the output of Circuit onto Pin, O is the read of the pin. t is the toggle
 wire scl_read_filter;
@@ -40,6 +49,7 @@ wire clkgen_rst;
 reg [2:0] state_reg;        logic [2:0] state_next;
 reg [2:0] state_last;       logic [2:0] state_last_next; // Kinda a funny name, used for ack
 reg [2:0] w_cnt;            logic [2:0] w_cnt_next       // Counter Used and Decremented inside the state machine
+reg [2:0] phy_state_reg     logic [2:0] phy_state_next;
 reg sda_write_reg;          logic sda_write_next;
 reg sda_t_reg;              logic sda_t_next; 
 reg scl_t_reg;              logic scl_t_next;
@@ -65,36 +75,38 @@ ff_filter #(STAGES=2) scl_filter( .clk(CLK), ._in(scl_o), ._out(scl_read_filter)
 // After contemplating spending time constructing a reset circuit, this is an FPGA 
 // so we are using Initial block, cuz I got time for that
 initial begin
-    state_reg       <= IDLE; 
+    state_reg       <= IDLE;            phy_state_reg   <= IDLE;
     scl_t_reg       <= 1'b0;            scl_t_next      <= 1'b0; 
     sda_t_reg       <= 1'b0;            sda_t_next      <= 1'b0;
     //scl_write_reg   <= 1'b0;          scl_write_next  <= 1'b0;
     sda_write_reg   <= 1'b0;            sda_write_next  <= 1'b0;
     en_clk_gen_reg  <= 1'b1;            rst_clkgen_next <= 1'b1;
     w_cnt           <= 3'b111;          w_cnt_next      <= 3'b111;
+    
     CLPD_ADDR       <= 7'b01111_10;      
     CLPD_CTRL_REG   <= 8'b0000_0010;     
     CLPD_LED4_ON    <= 8'b0000_0001;    
 end
 
-// Reset and register storage / procedural logic to coincide with the FSM logic
+// Reset and register storage / procedural logic to coincide with the FSM logic.
 always_ff @(posedge clk, posedge reset) begin
     //Initial Values
     if(reset) begin
-        state_reg       <= IDLE; 
-        scl_t_reg       <= 1'b0;    //scl_t_next       <= 1'b0; 
-        w_cnt           <= 3'b111;  //w_cnt_next       <= 3'b111;
+        state_reg       <=  IDLE;    
+        phy_state_reg   <=  IDLE;
+        scl_t_reg       <=  1'b0;    //scl_t_next       <= 1'b0; 
+        w_cnt           <=  3'b111;  //w_cnt_next       <= 3'b111;
     end else begin
-        state_reg       <= state_next;
-        scl_t_reg       <= scl_t_next;
-        sda_t_reg       <= sda_t_next;
+        state_reg       <=  state_next;
+        scl_t_reg       <=  scl_t_next;
+        sda_t_reg       <=  sda_t_next;
         //scl_write_reg   <= scl_write_next;
-        sda_write_reg   <= sda_write_next;
-        rst_clkgen_reg  <= clkgen_rst_next;
-        w_cnt           <= w_cnt_next;
-        state_last      <= state_last_next;
-        scl_read_last   <= scl_read_last_next;
-
+        sda_write_reg   <=  sda_write_next;
+        rst_clkgen_reg  <=  clkgen_rst_next;
+        w_cnt           <=  w_cnt_next;
+        state_last      <=  state_last_next;
+        scl_read_last   <=  scl_read_last_next;
+        phy_state_reg   <=  phy_state_next
     end
 end
 
@@ -166,6 +178,8 @@ always_comb begin
             end else begin
 
 
+
+            end
             end
         end
 
@@ -204,9 +218,16 @@ always_comb begin
 
         DEFAULT:    // You probably shouldn't be here  
     endcase
-
 end
 
+/** State Machine to Control obtain and show the physical state of the system 
+*   I.e. Shows when the system is on a low pulse following a start bit, or if the scl has gone back to high 
+*   after being low so that we know its time to send the next Address/Data bit over the SDA line */
+always_comb begin
+    case(phy_state_reg)
+
+
+end
 
 endmodule
 
