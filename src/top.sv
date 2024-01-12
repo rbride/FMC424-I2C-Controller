@@ -61,9 +61,6 @@ end
 //Generate Standard 100KHz clock as that is what the CLPD on the Extension Board Supports
 clk_gen_std_100k SCL_CLK_GEN(   .CLK(CLK),  .scl_t(scl_t)   );
 
-// NOTE: 50ns designed for 400KHz duty cycle of 100khz is 5000ns so 50 is whatever. remove or reduce if issues.
-// Glitch/Noise Filter use to filter the SCL signal read/used by the State machine
-ff_filter #(STAGES=7) scl_filter( .clk(CLK), ._in(SCL_PIN), ._out(scl_i_fltr) );
 
 
 
@@ -71,30 +68,37 @@ ff_filter #(STAGES=7) scl_filter( .clk(CLK), ._in(SCL_PIN), ._out(scl_i_fltr) );
 
 endmodule
 
-
-//Create I/O Buffer for SDA Pin
-//IOBUF sda_buf(
-//    .O(sda_out),
-//    .I(sda_in),
-//    .IO(SDA_PIN),
-//    .T(sda_t)
-//);
-
 // //CLPD Address
 //  //Last two Bits are guesses based on assumptions made of crappy docs change if does not work
 // localparam[7:0] CLPD_ADDR = 7'b01111_10; 
-
-
-
 
 // //I2C addresses of Slave modules of FMC484
 // localparam[6:0]
 // SI5338B_ADR   = 7'b1110000,
 //  //Wether you are talking to Module A or B is determ by selection bit of CLPD
 // QSFP_MOD      = 7'b1010000;    
-// IOBUF
-//      T -|
-//         |
-//  I------|>>----+---[I/O PIN]
-//                |
-//  O-----<<|-----+
+
+
+// Move to top level you don't instatiate inside of the module Do it at top level in vivado 
+// //Create I/O Buffer for SDA Pin
+// IOBUF sda_buf(  .O(sda_o),
+//                 .I(sda_i), 
+//                 .IO(SDA_PIN),
+//                 .T(sda_t)
+// );
+// //Create I/O Buffer for SCL Pin
+// IOBUF scl_buf(  .O(scl_o),
+//                 .I(scl_i),
+//                 .IO(SCL_PIN),
+//                 .T(scl_t)
+// );
+
+// // Assign Tri States pins 
+// // IOBUF
+// //      T -|
+// //         |
+// //  I------|>>----+---[I/O PIN]
+// //                |
+// //  O-----<<|-----+
+// assign SCL_PIN = scl_t ? 1'bZ : scl_i; //SCL is either high Z or output of Clk Gen
+// assign SDA_PIN = sda_t ? 1'bZ : sda_i; //SDA is either high Z or Output of State Machine
