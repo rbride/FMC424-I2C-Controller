@@ -25,18 +25,16 @@ module fmc_i2c_controller(
 localparam [2:0]
     IDLE                    =   3'b000,
     START_SEND              =   3'b001,
-    ADDR_CLPD               =   3'b010,
+    WR_ADDR_CLPD            =   3'b010,
     ADDR_CNTR_REG           =   3'b011,
-    TURN_ON_LED4            =   3'b100,
-    WRITE_TO                =   3'b101,
-    READ_FROM               =   3'b110,
+    TURN_ON_LED4            =   3'b101,
+    WAIT_FOR_WRITE          =   3'b110,
     WAIT_FOR_ACK            =   3'b111;
 //Physical State States
 localparam [2:0]
     BOTH_LINES_RELEASED     =   3'b000,
-    SEND_START_BIT          =   3'b001,
-    START_SCL_STILL_HIGH    =   3'b010,
-    SCL_TRANS_HIGH_TO_LOW   =   3'b011,
+    PHY_WAIT_TO_WRITE       =   3'b001,
+    PHY_WRITE_TO_SDA        =   3'b010,
     SCL_TRANS_LOW_TO_HIGH   =   3'b100,
     ACK_ACK                 =   3'b101;
 
@@ -49,15 +47,15 @@ reg scl_t_reg;              logic scl_t_next;
 reg sda_t_reg;              logic sda_t_next;
 reg sda_write_reg;          logic sda_write_next;
 reg rst_clkgen_reg;         logic rst_clkgen_next;
-reg scl_read_last;          logic scl_read_last_next;       
 reg [2:0] wr_cnt;           logic [2:0] wr_cnt_next;        // Counter Used and Decremented inside the state machine
+reg d_written_reg;          logic d_written_next;
 /* Logic and Physical State FSM Spacer */ 
 reg [2:0] phy_state_reg;    logic [2:0] phy_state_next;
+reg [2:0] phy_state_lreg;   logic [2:0] phy_state_last; 
 //Addresses needed To send last two bits of CLPD Addr are a guess based of the doc, change if doesn't work
 reg [6:0] CLPD_ADDR         = 7'b01111_10;
 reg [7:0] CLPD_CTRL_REG     = 8'b0000_0010;
 reg [7:0] CLPD_LED4_ON      = 8'b0000_0001;
-
 
 assign scl_t        = scl_t_reg;
 assign sda_t        = sda_t_reg;
@@ -81,8 +79,10 @@ initial begin
     rst_clkgen_reg  <= 1'b1;                //Active Low
     scl_read_last   <= scl_read_filter;      //Like in reset this only kinda makes sense but whatever
     wr_cnt          <= 3'b111;
+    d_written_reg <= 1'b0;
     /* Logic and Physical State FSM Spacer */ 
     phy_state_reg   <= BOTH_LINES_RELEASED;
+    phy_state_lreg  <= BOTH_LINES_RELEASED;  
     //Addresses below are static and never change so don't need to put them in reset
     CLPD_ADDR       <= 7'b01111_10;
     CLPD_CTRL_REG   <= 8'b0000_0010;
@@ -101,8 +101,10 @@ always_ff @(posedge clk, posedge reset) begin
         rst_clkgen_reg  <=  1'b1;               //Active Low
         scl_read_last   <=  scl_read_filter;    //Just Set the last as the current. Idk.. Just pay attention to this
         wr_cnt          <=  3'b111;  
+        d_written_reg   <=  1'b1;
         /* Logic and Physical State FSM Spacer */ 
         phy_state_reg   <=  BOTH_LINES_RELEASED;
+        phy_state_lreg  <=  BOTH_LINES_RELEASED;
     end 
     else begin
         state_reg       <=  state_next;
@@ -111,158 +113,136 @@ always_ff @(posedge clk, posedge reset) begin
         sda_t_reg       <=  sda_t_next;
         sda_write_reg   <=  sda_write_next;
         rst_clkgen_reg  <=  rst_clkgen_next;
-        scl_read_last   <=  scl_read_last_next;
         wr_cnt          <=  wr_cnt_next;
+        d_written_reg   <=  d_written_next;  
         /* Logic and Physical State FSM Spacer */ 
         phy_state_reg   <=  phy_state_next;
+        phy_state_lreg  <=  phy_state_last;
     end
 end
 
 //State Machine / Combinational Logic
 always_comb begin
     //Default values wires take on if not changed in FSM. Done here instead of Assign Statements for readability
-    state_next          = state_reg;
-    state_last_next     = state_last;
-    scl_t_next          = scl_t_reg;
-    sda_t_next          = sda_t_reg;
-    sda_write_next      = sda_write_reg;
-    rst_clkgen_next     = rst_clkgen_reg;
-    scl_read_last_next  = scl_read_last;
-    wr_cnt_next         = wr_cnt;
+    state_next          =   state_reg;
+    state_last_next     =   state_last;
+    scl_t_next          =   scl_t_reg;
+    sda_t_next          =   sda_t_reg;
+    sda_write_next      =   sda_write_reg;
+    rst_clkgen_next     =   rst_clkgen_reg;
+    wr_cnt_next         =   wr_cnt;
     
     case(state_reg)
         /** You get to Idle either after we finish everything or at the very beggining
-        * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Sig
-        * We are not using a multi-master bus so there should be few issues with this */        
+        * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Signal
+        * We are not using a multi-master bus so it should be like when the lines stabalize after startup */        
         IDLE : begin
-            if( (scl_pin_val != 1'b0) && (sda_pin_valrst_clkgen_next != 1'b0) ) begin
-                state_next      = START_SEND;
-                phy_state_next  = SEND_START_BIT; 
+            if( (scl_pin_val != 1'b0) && (sda_pin_val != 1'b0) ) begin
+                state_next          =   START_SEND; 
             end
+            //Otherwise make sure everything is returned to default
             else begin 
-                state_next      = IDLE;
-                phy_state_next  = BOTH_LINES_RELEASED;
+                state_next          =   IDLE;
+                state_last_next     =   IDLE;
+                scl_t_next          =   1'b0;
+                sda_t_next          =   1'b0;
+                rst_clkgen_next     =   1'b1;
+                wr_cnt              =   3'b111;
             end
-        endrst_clkgen_nextt for SCL low, then send address bits followed by R or W */  
+        end
+
+        /** Set _t's to '1' so that 'Write' is put onto the IO, Reset Clk Gen, & set SDA low */  
         START_SEND : begin    
-            sda_t_next      = 1'b1;   //Write the writes to the Pins
-            scl_t_next      = 1'b1;   //Output CLK Gen onto IO pin 
-            sda_write_next  = 1'b0;   //Set SDA Low
-            clkgen_rst_next = 1'b0;   //Reset, reset fires on low
-            state_next      = ADDR_CLPD;    
-            state_last_next = START_SEND;
-            phy_state_next  = START_SCL_STILL_HIGH;
+            state_next          =   WR_ADDR_CLPD;
+            state_last_next     =   START_SEND;
+            scl_t_next          =   1'b1;           //Output CLK Gen onto IO pin 
+            sda_t_next          =   1'b1;           //Write the writes to the Pins
+            sda_write_next      =   1'b0;           //Set SDA Low
+            rst_clkgen_next     =   1'b0;           //Reset, reset fires on low
         end  
 
         /** First, turn of the reset on the CLK Gen, then wait for the first time for SCL to go low
         *   When SCL goes low set the first bit, decrement the counter. It goes high then goes low again,      
         *   Send next bit, until all bits are sent, then put in Write state after setting last state */       
-        ADDR_CLPD : begin
-            if(rst_clkgen_reg) begin
-                rst_clkgen_next = 1'b1;         //Stop CLK Reset so count starts
-                state_next      = ADDR_CLPD;    //Return to Same state
-                wr_cnt_next      = 3'b111;       //Propably Redundant but no reason not to be sure
-            //Since we reset the clock high we know that when we hit this, SCL is High and use this in its own case
-            //to avoid more SCL value change logic above
-            end else if (wr_cnt = 3'b111) begin
-                if(scl_read_filter)
-                    state_next = ADDR_CLPD;     //Wait for it to go low
-                else begin
-                    sda_write_next      = CLPD_ADDR[wr_cnt];
-                    state_next          = ADDR_CLPD;
-                    wr_cnt_next          = 3'b110;
-                    scl_read_last_next  = 1'b0;
-                end
-            //Reduction or so as long as its not all 0
-            end else if ( |wr_cnt ) begin 
-                //Should hit first, i.e. SCL is still low so check if both still 0
-                if((scl_read_filter == 1'b0) && (scl_read_last == 1'b0)) 
-                    state_next = ADDR_CLPD;
-                //SCL changed to high and scl last low
-                else if((scl_read_filter == 1'b1) && (scl_read_last == 1'b0)) begin
-                    state_next = ADDR_CLPD;
-                    scl_read_last_next = 1'b1;
-                end
-                //SCL changed back to Low, so now its time to send next bit
-                else if((scl_read_filter == 1'b0) && (scl_read_last == 1'b0)) begin
-                    scl_read_last_next  = 1'b0;
-                    sda_write_next      = CLPD_ADDR[wr_cnt];
-                    wr_cnt_next          = wr_cnt - 1;
-                    state_next          = ADDR_CLPD;
-                end
-            //Only case left is wr_cnt is all 0
-            end else begin
-
-
-
+        WR_ADDR_CLPD : begin
+            if (rst_clkgen_reg) begin
+                state_next          =   WR_ADDR_CLPD;
+                rst_clkgen_next     =   1'b1;
+                wr_cnt_next         =   3'b111;
             end
+            
+            //Write as long as the Counter isn't 0
+            else if ( |wr_cnt ) begin
+                //Wait for SCL to go low for the first time then send the first bit
+                if (phy_state_reg == PHY_WAIT_TO_WRITE)
+                    state_next          =   WR_ADDR_CLPD;
+                //After goes low send first/next bit of addr
+                else if (phy_state_reg == PHY_WRITE_TO_SDA) begin
+                    state_next          =   WAIT_FOR_WRITE;
+                    state_last_next     =   WR_ADDR_CLPD;
+                    sda_write_next      =   CLPD_ADDR[ wr_cnt ];
+                    wr_cnt_next         =   wr_cnt - 1'b1;   
+                    bit_rit_swit_next   =   1'b1;        
+                end
             end
-        end
-
-        /** 
-        *   
-        *   */
-        ADDR_CNTR_REG : begin
-
-        end
-
-        /** 
-        *   
-        *   */
-        TURN_ON_LED4 : begin
-
-        end
-
-        /** Simple State, just adds the Write indiciator after the end of address 
-        *   This state does not affect the last state because that is literally just used for the ACK State */
-        WRITE_TO : begin
-
+            //Final Logic For cnt is now empty    
         end 
 
-        /** Simple State, justs adds the Rerst_clkgen_next */
+
+        /* Simple State Where we pause waiting for the time in which we send the next bit */
+        WAIT_FOR_WRITE : begin
+            bit_rit_swit = 1'b0;    //Turn off indicator that I have written a bit
+            if ( (phy_state_reg == PHY_WRITE_TO_SDA) && (phy_state_reg == PHY_WAIT_TO_WRITE)) 
+                state_next      =   ;   
+        
+        end
+
+        /* Simple State, justs adds the Rerst_clkgen_next */
         WAIT_FOR_ACK : begin
 
         end 
 
-        DEFAULT:    // You probably shouldn't be here  
+        
     endcase
 end
 
-/** State Machine to Control obtain and show the physical state of the system 
-*   I.e. Shows when the system is on a low pulse following a start bit, or if the scl has gone back to high 
-*   after being low so that we know its time to send the next Address/Data bit over the SDA line */
+/* State Machine used to flag current physical state of the system/bus */
 always_comb begin
-    //Default values wires take on if not changed in FSM. Done here instead of Assign Statements for readability
+    //Default values wires take on if not changed in FSM. 
     phy_state_next = IDLE;
+    phy_state_last = IDLE;
 
-    case(phy_state_reg)
-        /** Starting Physical State of the Bus, Both SCL & SDA 'Released' (High Z or 1) & neither _t is asserted */
+    case(phy_state_reg) 
+        /** Starting Physical State of the Bus, Both SCL & SDA 'Released' (High Z or 1) & neither _t is asserted 
+        *   Holds til sda_o drops which indicates are start bit has been sent */
         BOTH_LINES_RELEASED : begin
-            sda_t_next      = 1'b0;
-            scl_t_next      = 1'b0;
-            rst_clkgen_next = 1'b1; 
+            if (sda_o)       
+                phy_state_next      =   PHY_WAIT_TO_WRITE;
+            else 
+                phy_state_next      =   BOTH_LINES_RELEASED;
+        end
+        
+        /* SDA is Set low, and clk gen has started so we are currently waiting for the SCL to go low */
+        PHY_WAIT_TO_WRITE : begin
 
+            if (!scl_read_filter) begin
+                phy_state_next      =   PHY_WRITE_TO_SDA;
+                phy_state_last      =   PHY_WAIT_TO_WRITE;
+            end else
+                phy_state_next      =   PHY_WAIT_TO_WRITE;
         end
         
-        /**  
-        *   */
-        SEND_START_BIT : begin
-            sda_t_next = 1'b1;
-            sda_t_
-        end
+        PHY_WRITE_TO_SDA : begin
+            //Hold Indicator to fsm that It needs to write the SDA til it tells me It wrote one
+            if(bit_rit_swit) 
+                phy_state_next      =   PHY_WAIT_TO_WRITE;
+            //When we are sure bit is written, go back to waiting to tell the FSM to write again 
+            else
 
-        /** 
-        *   
-        *   */
-        START_SCL_STILL_HIGH : begin
-        
-        end
-        
-        /** 
-        *   
-        *   */
-        SCL_TRANS_HIGH_TO_LOW : begin
-        
+            //SCL Still low from initial send
+            if(!scl_read_filter) begin
+                
+            end
          
         end
 
