@@ -157,7 +157,7 @@ always_comb begin
         * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Signal
         * We are not using a multi-master bus so it should be like when the lines stabalize after startup */        
         IDLE : begin
-            if( (scl_pin_val != 1'b0) && (sda_pin_val != 1'b0) ) begin
+            if((scl_pin_val != 1'b0) && (sda_pin_val != 1'b0)) begin
                 state_next          =   START_SEND; 
             end
             //Otherwise make sure everything is returned to default
@@ -183,9 +183,26 @@ always_comb begin
             write_cmpl_next     =   1'b0;
         end  
 
-        /* ACK Not Received So Start Again from Write CLPD */  
+        /** ACK Not Received So Start Again from Write CLPD 
+        *   We do the same thing as A Stop condition except we want to go from high to low on sda     */  
         REPEATED_START : begin
-            //TODO
+            //Wait for SCL To go low
+            if (scl_read_lreg && scl_read_reg) begin
+                state_next          =   REPEATED_START;
+            end
+            //SCL goes low, bring SDA high so I can bring it down again
+            else if (scl_read_lreg && scl_read_reg) begin
+                state_next          =   REPEATED_START;
+                sda_write_next      =   1'b1;
+                scl_read_lnext      =   1'b0;   
+            end 
+            //SCl Went back to high, now its time to set SDA to 0 to indicate start bit sent
+            else if (!scl_read_lreg && scl_read_reg) begin
+                state_next          =   WRITE_CLPD_ADDR;
+                //potentially we can send a start bit here. Or not
+                sda_write_next      =   1'b0;   //Indicatge we start back up yeet
+                wr_cnt_next         =   3'h7;   //Reset the counter.
+            end
         end
 
         /** First, turn of the reset on the CLK Gen, then wait for the first time for SCL to go low
@@ -233,7 +250,7 @@ always_comb begin
                 else if(phy_state_reg == PHY_WRITE_TO_SDA) begin
                     state_next          =   WAIT_FOR_WRITE;
                     state_last_next     =   ADDR_CNTR_REG;
-                    sda_write_next      =   CLPD_CTRL_REG[(wr_cnt - 1'b1)];
+                    sda_write_next      =   CLPD_CTRL_REG[wr_cnt];
                     wr_cnt_next         =   wr_cnt - 1'b1;
                     d_written_next      =   1'b1;   
                 end
@@ -259,7 +276,7 @@ always_comb begin
                 else if(phy_state_reg == PHY_WRITE_TO_SDA) begin
                     state_next          =   WAIT_FOR_WRITE;
                     state_last_next     =   TURN_ON_LED4;
-                    sda_write_next      =   CLPD_LED4_ON[{wr_cnt - 1'b1}];
+                    sda_write_next      =   CLPD_LED4_ON[wr_cnt];
                     wr_cnt_next         =   wr_cnt - 1'b1;
                     d_written_next      =   1'b1;
                 end
@@ -314,7 +331,7 @@ always_comb begin
                 //SCL is now high, see if SDA has been held low yet by reciever/slave
                 if( !sda_read_reg ) begin
                     sda_t_next      =   1'b1;   //Reassert control over SDA
-                    wr_cnt_next     =   3'h7;   //The case for CLPD counter needing to be 4'h7 is taken care off inside reset or start logic                 
+                    wr_cnt_next     =   3'h7;   //The case for CLPD counter needing to be 3'h7 is taken care off inside reset or start logic                 
                     scl_read_lreg   =   1'b1;
                     case(state_last)
                         WRITE_CLPD_ADDR    :   state_next   =   ADDR_CNTR_REG;
@@ -333,12 +350,13 @@ always_comb begin
         /* Stop Condition. We successfully send data, send the next thing or just let the BUS idle */
         STOP : begin
             //Wait for SCL to go low
-            if( scl_read_lreg && scl_read_reg ) begin
+            if (scl_read_lreg && scl_read_reg) begin
                 state_next      =   STOP;
             end
             //SCL went low
             else if (scl_read_lreg && !scl_read_reg) begin
                 state_next      =   STOP;
+                sda_write_next  =   1'b0;   //Hold low so It can go back high when ready to send stop
                 scl_read_lnext  =   1'b0;
             end 
             //SCL went high again now we can set sda to 1 and just end it
