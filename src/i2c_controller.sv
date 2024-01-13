@@ -35,8 +35,7 @@ localparam [2:0]
 localparam [2:0]
     BOTH_LINES_RELEASED     =   3'b000,
     PHY_WAIT_TO_WRITE       =   3'b001,
-    PHY_WRITE_TO_SDA        =   3'b010,
-    ACK_ACK                 =   3'b101;
+    PHY_WRITE_TO_SDA        =   3'b010;
 
 wire scl_read_filter;       wire sda_read_filter;
 wire clkgen_rst;
@@ -49,7 +48,7 @@ reg sda_t_reg;              logic sda_t_next;
 reg sda_write_reg;          logic sda_write_next;
 reg sda_read_reg;
 reg rst_clkgen_reg;         logic rst_clkgen_next;
-reg [3:0] wr_cnt;           logic [3:0] wr_cnt_next;        // Counter Used and Decremented inside the state machine
+reg [2:0] wr_cnt;           logic [2:0] wr_cnt_next;        // Counter Used and Decremented inside the state machine
 reg d_written;              logic d_written_next;
 reg write_cmpl;             logic write_cmpl_next;
 /* Logic and Physical State FSM Spacer */ 
@@ -84,7 +83,7 @@ initial begin
     sda_write_reg   <=  1'b0;
     sda_read_reg    <=  sda_read_filter;
     rst_clkgen_reg  <=  1'b1;                //Active Low
-    wr_cnt          <=  4'h7;
+    wr_cnt          <=  3'h7;
     d_written       <=  1'b1;
     write_cmpl      <=  1'b0;
     /* Logic and Physical State FSM Spacer */ 
@@ -109,7 +108,7 @@ always_ff @(posedge clk, posedge reset) begin
         sda_write_reg   <=  1'b0;
         sda_read_reg    <=  sda_read_filter;
         rst_clkgen_reg  <=  1'b1;               //Active Low
-        wr_cnt          <=  4'h7;  
+        wr_cnt          <=  3'h7;  
         d_written       <=  1'b1;              //Strangly I think it makes more logical sense for this to start on
         write_cmpl      <=  1'b0;
         /* Logic and Physical State FSM Spacer */ 
@@ -164,7 +163,7 @@ always_comb begin
                 scl_t_next          =   1'b0;
                 sda_t_next          =   1'b0;
                 rst_clkgen_next     =   1'b1;
-                d_written_next      =   4'h7;
+                wr_cnt_next         =   3'h7;
             end
         end
 
@@ -175,7 +174,9 @@ always_comb begin
             scl_t_next          =   1'b1;           //Output CLK Gen onto IO pin 
             sda_t_next          =   1'b1;           //Write the writes to the Pins
             sda_write_next      =   1'b0;           //Set SDA Low
+            wr_cnt_next         =   3'h7;
             rst_clkgen_next     =   1'b0;           //Reset, reset fires on low
+            write_cmpl_next     =   1'b0;
         end  
 
         /* ACK Not Received So Start Again from Write CLPD */  
@@ -187,10 +188,9 @@ always_comb begin
         *   When SCL goes low set the first bit, decrement the counter. It goes high then goes low again,      
         *   Send next bit, until all bits are sent, then put in Write state after setting last state */       
         WRITE_CLPD_ADDR : begin
-            if (rst_clkgen_reg) begin
+            if (!rst_clkgen_reg) begin
                 state_next          =   WRITE_CLPD_ADDR;
                 rst_clkgen_next     =   1'b1;
-                wr_cnt_next         =   4'h7;
             end
             
             //Writes all the data in the address for CLPD 
@@ -218,6 +218,56 @@ always_comb begin
              
         end 
 
+        /* Follows the same logic as WRITE CLPD the counter value should be written 4'h8 by Wait for ack */
+        ADDR_CNTR_REG : begin
+            if( |wr_cnt ) begin
+                //Bus is wait to write upon first entry to this after reading an ACK on SDA 
+                //Like in CLPD Write, after the first bit is wrtiten every time we get here phy state is PHY Write SDA
+                if (phy_state_reg == PHY_WAIT_TO_WRITE) begin
+                    state_next          =   ADDR_CNTR_REG;
+                end
+                else if(phy_state_reg == PHY_WRITE_TO_SDA) begin
+                    state_next          =   WAIT_FOR_WRITE;
+                    state_last_next     =   ADDR_CNTR_REG;
+                    sda_write_next      =   CLPD_CTRL_REG[(wr_cnt - 1'b1)];
+                    wr_cnt_next         =   wr_cnt - 1'b1;
+                    d_written_next      =   1'b1;   
+                end
+            end 
+            else begin
+                state_next          =   WAIT_FOR_WRITE;
+                state_last_next     =   ADDR_CNTR_REG;
+                sda_write_next      =   CLPD_CTRL_REG[0]; //Cnt is now 0
+                d_written_next      =   1'b1;
+                write_cmpl_next     =   1'b1;
+
+            end
+        end         
+
+        /* Follows the same logic as WRITE CLPD the counter value should be written 4'h8 by Wait for ack */
+        TURN_ON_LED4 : begin
+            if( |wr_cnt ) begin
+                //Bus is wait to write upon first entry to this after reading an ACK on SDA 
+                //Like in CLPD Write, after the first bit is wrtiten every time we get here phy state is PHY Write SDA
+                if (phy_state_reg == PHY_WAIT_TO_WRITE) begin
+                    state_next          =   TURN_ON_LED4;
+                end
+                else if(phy_state_reg == PHY_WRITE_TO_SDA) begin
+                    state_next          =   WAIT_FOR_WRITE;
+                    state_last_next     =   TURN_ON_LED4;
+                    sda_write_next      =   CLPD_LED4_ON[{wr_cnt - 1'b1}];
+                    wr_cnt_next         =   wr_cnt - 1'b1;
+                    d_written_next      =   1'b1;
+                end
+            end 
+            else begin
+                state_next          =   WAIT_TO_WRITE;
+                state_last_next     =   TURN_ON_LED4;
+                sda_write_next      =   CLPD_LED4_ON[0];
+                d_written_next      =   1'b1;
+                write_cmpl_next     =   1'b1;
+            end
+        end
 
         /* Pause waiting. then return to where we were after ready to write another bit */
         WAIT_FOR_WRITE : begin
@@ -233,17 +283,12 @@ always_comb begin
                     state_next          =   WAIT_FOR_ACK;
                     write_cmpl_next     =   1'b0;                
                 end else begin
-                    case(state_last)
-                        WRITE_CLPD_ADDR         :  state_next   =   WRITE_CLPD_ADDR;
-                        ADDR_CNTR_REG           :  state_next   =   ADDR_CNTR_REG;
-                        TURN_ON_LED4            :  state_next   =   TURN_ON_LED4;
-                    endcase
+                    state_next          =   state_last;
                 end
             //Hold til ready to write next SDA Bit
             end else begin
                 state_next  =   WAIT_FOR_WRITE;
             end
-        
         end
 
         /** To wait for ack, we release our control of the SDA line, then we wait for the next 
@@ -252,25 +297,30 @@ always_comb begin
         WAIT_FOR_ACK : begin
             sda_t_next  = 1'b0;
             //currently my SCL is low, so when it goes back high we can just check to see if there is a ack 
-            if(sda_read_filter == 1'b0)
+            if(sda_read_filter == 1'b0) begin
                 state_next  =   WAIT_FOR_ACK;
+            end
             else begin
                 if( !sda_read_filter ) begin
+                    sda_t_next      =   1'b1;   //Reassert control over SDA
+                    wr_cnt_next     =   3'h7;   //The case for CLPD counter needing to be 4'h7 is taken care off inside reset or start logic                 
                     case(state_last)
-                        WRITE_BIT_AFTER_CLPD    :   state_next  =   ADDR_CNTR_REG;
-
+                        WRITE_CLPD_ADDR    :   state_next   =   ADDR_CNTR_REG;
+                        ADDR_CNTR_REG      :   state_next   =   TURN_ON_LED4;
+                        TURN_ON_LED4       :   state_next   =   IDLE;           // :)
                     endcase
-                end else
+                end 
+                else begin
                     //No ack Received Sad!
+                    state_next  =   REPEATED_START;
                 end
+                
             end
-
-        end 
+        end
 
         default : begin 
             //NOP does nothing
-        end
-        
+        end      
     endcase
 end
 
@@ -333,14 +383,9 @@ always_comb begin
             end
         end
 
-        /** After the address/data send we wait for the ack, the master, which is us releases the SDA line 
-        *   And watches to make sure that the receiver/slave pulls it low by the 9th clock pulse, if it does not
-        *   something has gone wrong and we need to go back to the start and try again. */ 
-        ACK_ACK : begin
-            //NOP as of now
+        default : begin 
+            // NOP 
         end
-
-
     endcase
 end
 
