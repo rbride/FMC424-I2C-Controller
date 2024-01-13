@@ -22,15 +22,19 @@ module fmc_i2c_controller(
 );
 
 //State, well states 
-localparam [2:0]
-    IDLE                    =   3'b000,
-    START_SEND              =   3'b001,
-    REPEATED_START          =   3'b010,
-    WRITE_CLPD_ADDR         =   3'b011,
-    ADDR_CNTR_REG           =   3'b100,
-    TURN_ON_LED4            =   3'b101,
-    WAIT_FOR_WRITE          =   3'b110,
-    WAIT_FOR_ACK            =   3'b111;
+localparam [3:0]
+    IDLE                    =   4'b0000,
+    START_SEND              =   4'b0001,
+    REPEATED_START          =   4'b0010,
+    WRITE_CLPD_ADDR         =   4'b0011,
+    ADDR_CNTR_REG           =   4'b0100,
+    TURN_ON_LED4            =   4'b0101,
+
+    TEMP_DO_NOTHING         =   4'b1010,
+
+    WAIT_FOR_WRITE          =   4'b1101,
+    WAIT_FOR_ACK            =   4'b1110,
+    STOP                    =   4'b1111;
 //Physical State States
 localparam [2:0]
     BOTH_LINES_RELEASED     =   3'b000,
@@ -269,6 +273,12 @@ always_comb begin
             end
         end
 
+        //Temp State that does literally nothing just for the first led state so it does nothing after turning it on
+        TEMP_DO_NOTHING : begin 
+            state_next  =   TEMP_DO_NOTHING;
+        end
+
+
         /* Pause waiting. then return to where we were after ready to write another bit */
         WAIT_FOR_WRITE : begin
             //This literally just exist to ensure a wait of 1 clock cycle lmao
@@ -297,17 +307,19 @@ always_comb begin
         WAIT_FOR_ACK : begin
             sda_t_next  = 1'b0;
             //currently my SCL is low, so when it goes back high we can just check to see if there is a ack 
-            if(sda_read_filter == 1'b0) begin
+            if( !scl_read_reg ) begin
                 state_next  =   WAIT_FOR_ACK;
             end
             else begin
-                if( !sda_read_filter ) begin
+                //SCL is now high, see if SDA has been held low yet by reciever/slave
+                if( !sda_read_reg ) begin
                     sda_t_next      =   1'b1;   //Reassert control over SDA
                     wr_cnt_next     =   3'h7;   //The case for CLPD counter needing to be 4'h7 is taken care off inside reset or start logic                 
+                    scl_read_lreg   =   1'b1;
                     case(state_last)
                         WRITE_CLPD_ADDR    :   state_next   =   ADDR_CNTR_REG;
                         ADDR_CNTR_REG      :   state_next   =   TURN_ON_LED4;
-                        TURN_ON_LED4       :   state_next   =   IDLE;           // :)
+                        TURN_ON_LED4       :   state_next   =   STOP;  // :)
                     endcase
                 end 
                 else begin
@@ -315,6 +327,29 @@ always_comb begin
                     state_next  =   REPEATED_START;
                 end
                 
+            end
+        end
+
+        /* Stop Condition. We successfully send data, send the next thing or just let the BUS idle */
+        STOP : begin
+            //Wait for SCL to go low
+            if( scl_read_lreg && scl_read_reg ) begin
+                state_next      =   STOP;
+            end
+            //SCL went low
+            else if (scl_read_lreg && !scl_read_reg) begin
+                state_next      =   STOP;
+                scl_read_lnext  =   1'b0;
+            end 
+            //SCL went high again now we can set sda to 1 and just end it
+            else if (!scl_read_lreg && scl_read_reg) begin
+                state_next      =   TEMP_DO_NOTHING;
+                scl_t_next      =   1'b0;
+                sda_t_next      =   1'b0;
+            end 
+            //Waiting for SCL to go back high
+            else begin
+                state_next      =   STOP;
             end
         end
 
