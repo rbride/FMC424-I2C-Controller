@@ -17,7 +17,7 @@
 module clk_gen_std_100k(
     input wire CLK,
     input wire rst,
-    output wire scl_i;  // used for "O" port of IO_Buf
+    output wire scl_i  // used for "O" port of IO_Buf
 );
 
 reg [12:0] cnt = 13'b1_00000_00000;
