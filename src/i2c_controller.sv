@@ -320,7 +320,7 @@ always_comb begin
 
         /** To wait for ack, we release our control of the SDA line, then we wait for the next 
          *  clock rise of SCL, where we check if the reciever has held low sda by the next SCL Rise indicating recieved 
-         *  if the reciever/slave did not recieve we send a repeated start bit and try again (L) */
+         *  if the reciever/slave did not recieve we send a repeated start bit and try again */
         WAIT_FOR_ACK : begin
             sda_t_next  = 1'b0;
             //currently my SCL is low, so when it goes back high we can just check to see if there is a ack 
