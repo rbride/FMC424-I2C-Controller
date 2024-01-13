@@ -13,12 +13,13 @@
 // Out is the Designs Output to the Tri-state buffer. 
 module fmc_i2c_controller(
     input wire CLK,
-    input sda_o,
-    input scl_o,
-    output scl_i,
-    output scl_t,
-    output sda_i,
-    output sda_t
+    input wire reset,
+    input wire sda_o,
+    input wire scl_o,
+    output wire scl_i,
+    output wire scl_t,
+    output wire sda_i,
+    output wire sda_t
 );
 
 //State, well states 
@@ -69,12 +70,12 @@ assign sda_t        =   sda_t_reg;
 assign sda_i        =   sda_write_reg;
 assign clkgen_rst   =   rst_clkgen_reg;
 //Instanciate and Connect 100KHz Module. Will flip .scl_i every 100KHz. 
-clk_gen_std_100k SCL_CLK_GEN( .CLK(CLK), .rst(clkgen_rst), scl_i(scl_i));
+clk_gen_std_100k SCL_CLK_GEN( .CLK(CLK), .rst(clkgen_rst), .scl_i(scl_i));
 
 // Glitch/Noise Filter use to filter the SCL signal read/used by the State machine should be around 50ns (ish)
 // Might change to 1
-ff_filter #(STAGES = 2) scl_filter( .clk(CLK), ._in(scl_o), ._out(scl_read_filter) );
-ff_filter #(STAGES = 2) sda_filter( .clk(CLK), ._in(sda_o), ._out(sda_read_filter) );
+ff_filter #( .STAGES(2) ) scl_filter( .clk(CLK), ._in(scl_o), ._out(scl_read_filter) );
+ff_filter #( .STAGES(2) ) sda_filter( .clk(CLK), ._in(sda_o), ._out(sda_read_filter) );
 
 // After contemplating spending time constructing a reset circuit, this is an FPGA 
 // so we are using Initial block, cuz I got time for that
@@ -101,7 +102,7 @@ initial begin
 end
 
 // Reset and register storage / procedural logic to coincide with the FSM logic.
-always_ff @(posedge clk, posedge reset) begin
+always_ff @(posedge CLK, posedge reset) begin
     //Initial Values 
     if(reset) begin
         state_reg       <=  IDLE;    
@@ -157,7 +158,7 @@ always_comb begin
         * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Signal
         * We are not using a multi-master bus so it should be like when the lines stabalize after startup */        
         IDLE : begin
-            if((scl_pin_val != 1'b0) && (sda_pin_val != 1'b0)) begin
+            if((scl_read_reg != 1'b0) && (sda_read_reg != 1'b0)) begin
                 state_next          =   START_SEND; 
             end
             //Otherwise make sure everything is returned to default
@@ -282,7 +283,7 @@ always_comb begin
                 end
             end 
             else begin
-                state_next          =   WAIT_TO_WRITE;
+                state_next          =   WAIT_FOR_WRITE;
                 state_last_next     =   TURN_ON_LED4;
                 sda_write_next      =   CLPD_LED4_ON[0];
                 d_written_next      =   1'b1;
@@ -299,7 +300,7 @@ always_comb begin
         /* Pause waiting. then return to where we were after ready to write another bit */
         WAIT_FOR_WRITE : begin
             //This literally just exist to ensure a wait of 1 clock cycle lmao
-            if (d_written_reg) begin
+            if (d_written) begin
                 d_written_next      =   1'b0;               
                 state_next          =   WAIT_FOR_WRITE;
             end
@@ -424,7 +425,7 @@ always_comb begin
         ////// the lreg don't stand long enough for it to propagate
         PHY_WRITE_TO_SDA : begin
             //Hold Indicator to fsm that It needs to write the SDA til it tells me It wrote one
-            if(phy_state_lreg == PHY_WAIT_TO_WRITE || d_written_reg) begin
+            if(phy_state_lreg == PHY_WAIT_TO_WRITE || d_written) begin
                 phy_state_next      =   PHY_WRITE_TO_SDA;
                 phy_state_lnext     =   PHY_WRITE_TO_SDA;
             end
