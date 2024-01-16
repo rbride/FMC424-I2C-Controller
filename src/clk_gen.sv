@@ -12,7 +12,7 @@
 //////////////////////////////////
 ///  Standard 100KHz Clk Ver.  ///
 //////////////////////////////////
-//50/50 duty means 5000ns up 5000ns down. 5000/2 = 2500 = 0x9C4
+//50/50 duty means 5000ns up 5000ns down. 5000/20 = 250 = 0xFA
 //Divider assumes a 50MHz Clock input for the I2c
 module clk_gen_std_100k(
     input wire CLK,
@@ -20,18 +20,18 @@ module clk_gen_std_100k(
     output wire scl_i  // used for "O" port of IO_Buf
 );
 
-reg [12:0] cnt = 13'b1_00000_00000;
+reg [8:0] cnt = 9'b1_0000_0000;
 //if clk related issues try a syncronous clk this is async for literally no reason  
 always_ff @(posedge CLK) begin
     if(!rst) begin
-        cnt <= {1'b1, 12'h000};     //Reset to Start High to math logic 
-    end else if(cnt[11:0] == 12'h9C4) begin
-        cnt <= {(~cnt[12]), 12'h000}; //When Reaches value, Reset Counter and Flip highest bit
+        cnt <= {1'b1, 8'h00};     //Reset to Start High to math logic 
+    end else if(cnt[7:0] == 8'hFA) begin
+        cnt <= {(~cnt[8]), 8'h00}; //When Reaches value, Reset Counter and Flip highest bit
     end else begin
-        cnt <= cnt+1'b1;
+        cnt <= cnt + 1'b1;
     end
 end
 
-assign scl_i = cnt[12];
+assign scl_i = cnt[8];
 
 endmodule
