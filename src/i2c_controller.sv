@@ -27,9 +27,13 @@ localparam [3:0]
     IDLE                    =   4'b0000,
     START_SEND              =   4'b0001,
     REPEATED_START          =   4'b0010,
-    WRITE_CLPD_ADDR         =   4'b0011,
-    ADDR_CNTR_REG           =   4'b0100,
-    TURN_ON_LED4            =   4'b0101,
+    
+    WRITE_I2C_SW            =   4'b0011,
+    SET_I2CSW_FMC           =   4'b0100,
+ 
+    WRITE_CLPD_ADDR         =   4'b0101,
+    ADDR_CNTR_REG           =   4'b0110,
+    TURN_ON_LED4            =   4'b0111,
 
     TEMP_DO_NOTHING         =   4'b1010,
 
@@ -64,6 +68,8 @@ reg scl_read_lreg;          logic scl_read_lnext;
 reg [6:0] CLPD_ADDR         = 7'b01111_10;
 reg [7:0] CLPD_CTRL_REG     = 8'b0000_0010;
 reg [7:0] CLPD_LED4_ON      = 8'b0000_0001;
+reg [6:0] I2C_BUS_SW_ADDR   = 7'b1110_001;
+reg [7:0] CHAN_SEL_REG       = 8'b1000_0000;
 
 assign scl_t        =   scl_t_reg;
 assign sda_t        =   sda_t_reg;
@@ -99,6 +105,8 @@ initial begin
     CLPD_ADDR       <=  7'b01111_10;
     CLPD_CTRL_REG   <=  8'b0000_0010;
     CLPD_LED4_ON    <=  8'b0000_0001;    
+    I2C_BUS_SW_ADDR <=  7'b1110_001;
+    CHAN_SEL_REG    <=  8'b1000_0000;
 end
 
 // Reset and register storage / procedural logic to coincide with the FSM logic.
@@ -184,7 +192,8 @@ always_comb begin
             write_cmpl_next     =   1'b0;
         end  
 
-        /** ACK Not Received So Start Again from Write CLPD 
+        /** ACK Not Received So start again from WRITE CLPD, or from I2c, or I2c Select successful 
+        *   so repeat start send so that we can begin sending CLPD address
         *   We do the same thing as A Stop condition except we want to go from high to low on sda     */  
         REPEATED_START : begin
             //Wait for SCL To go low
@@ -199,24 +208,56 @@ always_comb begin
             end 
             //SCl Went back to high, now its time to set SDA to 0 to indicate start bit sent
             else if (!scl_read_lreg && scl_read_reg) begin
-                state_next          =   WRITE_CLPD_ADDR;
+                if(state_last == SET_I2CSW_FMC || state_last == SET_I2CSW_FMC) begin
+                    state_next      =   WRITE_I2C_SW;
+                end
+                else begin
+                    state_next          =   WRITE_CLPD_ADDR;
+                end
                 //potentially we can send a start bit here. Or not
-                sda_write_next      =   1'b0;   //Indicatge we start back up yeet
-                wr_cnt_next         =   3'h7;   //Reset the counter.
+                sda_write_next      =   1'b0;   //Indicate we start back up yeet
             end
         end
 
-        /** First, turn of the reset on the CLK Gen, then wait for the first time for SCL to go low
+        /** First, turn of the reset on the CLK Gen, then wait for the first time for SCL to go low         <- old comment copied from above CLPD
         *   When SCL goes low set the first bit, decrement the counter. It goes high then goes low again,      
         *   Send next bit, until all bits are sent, then put in Write state after setting last state */       
-        WRITE_CLPD_ADDR : begin
+        /**  Address the PCA9548ABS Switch and Select it so it goes to SCL_7 Port, which is the FMC. Add Write bit at end
+        *    The ADDR of the Switch is 7'b1110_001, and we want a write bit */  
+        WRITE_I2C_SW : begin
+            //Since now this is the first thing that happens we turn of reset on CLK gen and wait for SCL to go low
             if (!rst_clkgen_reg) begin
-                state_next          =   WRITE_CLPD_ADDR;
+                state_next          =   WRITE_I2C_SW;
                 rst_clkgen_next     =   1'b1;
             end
-            
+            else if( |wr_cnt ) begin
+                //Wait for SCL to go low for the first time then send the first bit
+                if (phy_state_reg == PHY_WAIT_TO_WRITE)
+                    state_next          =   WRITE_I2C_SW;       //Only gets hit the first time we enter
+                //After Goes low send first bit of address
+                else if(phy_state_reg == PHY_WRITE_TO_SDA) begin
+                    state_next          =   WAIT_FOR_WRITE;
+                    state_last_next     =   WRITE_I2C_SW;
+                    sda_write_next      =   I2C_BUS_SW_ADDR[(wr_cnt - 1'b1)];
+                    wr_cnt_next         =   wr_cnt - 1'b1;
+                    d_written_next      =   1'b1;
+            end
+            /* Write write bit to sda. The fact that write is '0' is dumb just wanted that to be known */
+            else begin
+                state_next          =   WAIT_FOR_WRITE;  
+                state_last_next     =   WRITE_I2C_SW; 
+                sda_write_next      =   1'b0;               //Write is 0 
+                d_written_next      =   1'b1; 
+                write_cmpl_next     =   1'b1;
+                end
+            end
+        end
+
+        /* Now we write to the CLPD this will look a lot like th write to Select switch as that code is copied from here
+        *  And gain the functionality from first if where you wait for the reset that was originally here */
+        WRITE_CLPD_ADDR : begin
             //Writes all the data in the address for CLPD 
-            else if ( |wr_cnt ) begin
+            if ( |wr_cnt ) begin
                 //Wait for SCL to go low for the first time then send the first bit
                 if (phy_state_reg == PHY_WAIT_TO_WRITE)
                     state_next          =   WRITE_CLPD_ADDR;       //Only gets hit the first time we enter
@@ -229,7 +270,7 @@ always_comb begin
                     d_written_next      =   1'b1;
                 end
             end
-            /* Write write bit to sda. The fact that write is '0' is dumb just wanted that to be known */
+            /* Write write bit to sda. The fact that write is '0' is dumb just wanted that to be known (again) */
             else begin
                 state_next          =   WAIT_FOR_WRITE;  
                 state_last_next     =   WRITE_CLPD_ADDR; 
@@ -237,7 +278,6 @@ always_comb begin
                 d_written_next      =   1'b1; 
                 write_cmpl_next     =   1'b1;
             end
-             
         end 
 
         /* Follows the same logic as WRITE CLPD the counter value should be written 4'h8 by Wait for ack */
@@ -332,17 +372,20 @@ always_comb begin
                 //SCL is now high, see if SDA has been held low yet by reciever/slave
                 if( !sda_read_reg ) begin
                     sda_t_next      =   1'b1;   //Reassert control over SDA
-                    wr_cnt_next     =   3'h7;   //The case for CLPD counter needing to be 3'h7 is taken care off inside reset or start logic                 
+                    wr_cnt_next     =   3'h7;               
                     scl_read_lreg   =   1'b1;
                     case(state_last)
-                        WRITE_CLPD_ADDR    :   state_next   =   ADDR_CNTR_REG;
+                        WRITE_I2C_SW       :   state_next   =   SET_I2CSW_FMC;
+                        SET_I2CSW_FMC      :   state_next   =   REPEATED_START;
+                        WRITE_CLPD_ADDR    :   state_next   =   ADDR_CNTR_REG;  
                         ADDR_CNTR_REG      :   state_next   =   TURN_ON_LED4;
                         TURN_ON_LED4       :   state_next   =   STOP;  // :)
                     endcase
                 end 
                 else begin
                     //No ack Received Sad!
-                    state_next  =   REPEATED_START;
+                    wr_cnt_next     =   3'h7; 
+                    state_next      =   REPEATED_START;
                 end
                 
             end
