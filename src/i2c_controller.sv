@@ -30,7 +30,9 @@ localparam [3:0]
     REPEATED_START          =   4'b0010,
     
     WRITE_ADDRESS           =   4'b0011,
-   
+    
+    BOARD_LED               =   4'b1010,
+
     WAIT_FOR_ACK            =   4'b1110,
     STOP                    =   4'b1111;
 //Physical State States
@@ -53,36 +55,31 @@ addr_mem[4]     =   8'b0000_0001;       //Value to be written to the control reg
 //Stuff added by redesign re-org
 reg cur_addr[1:0] = 2'b0;   wire cur_addr_next;
 reg cur_bit [2:0] = 3'h7;   wire cur_bit_next;
-reg phy_wait_flag;          logic phy_wait_flag_next;
 reg dec_cur_bit_cnt;        logic dec_cur_bit_cnt_next;   
 reg dec_cur_addr_cnt;       logic dec_cur_addr_cnt_next;        //#TODO bro called it Dec address when the value increments 
 reg write_cmpl;             logic write_cmpl_next;
 reg delay_rst_reg = 1'b0;   logic delay_rst_next;              // Idk fuck it initialize here 
 reg done_reg;               logic done_next;
 
-wire done_led_on;
-assign done_led = done_led_on;
+reg done_led_on_reg;        logic done_led_on_next;           
+assign done_led = done_led_on_reg;
 
-assign phy_wait_flag_next = ((phy_state_reg == PHY_WAIT_1) || (phy_state_reg == PHY_WAIT_2));
 
 
 wire scl_read_filter;       wire sda_read_filter;
 wire clkgen_rst;
 //Storage Regs and nets fed to regs from comb logic
 reg [2:0] state_reg;        logic [2:0] state_next;
-reg [2:0] state_last;       logic [2:0] state_last_next;    
 reg scl_t_reg;              logic scl_t_next;
 reg scl_read_reg;           
 reg sda_t_reg;              logic sda_t_next;
 reg sda_write_reg;          logic sda_write_next;
 reg sda_read_reg;
 reg rst_clkgen_reg;         logic rst_clkgen_next;
-reg d_written;              logic d_written_next;
 
 
 /* Logic and Physical State FSM Spacer */ 
 reg [2:0] phy_state_reg;    logic [2:0] phy_state_next;
-reg scl_read_lreg;          logic scl_read_lnext; 
 //Addresses needed To send last two bits of CLPD Addr are a guess based of the doc, change if doesn't work
 reg [6:0] CLPD_ADDR         = 7'b01111_10;
 reg [7:0] CLPD_CTRL_REG     = 8'b0000_0010;
@@ -121,7 +118,6 @@ always_ff @(posedge CLK) begin
         cur_bit             <=  3'h7;
         done_reg            <=  1'b0;
         state_reg           <=  IDLE;    
-        state_last          <=  IDLE;
         scl_t_reg           <=  1'b0;
         scl_read_reg        <=  scl_read_filter;    //Doesn't really matter what it takes on upon reset
         sda_t_reg           <=  1'b0;
@@ -130,11 +126,10 @@ always_ff @(posedge CLK) begin
         rst_clkgen_reg      <=  1'b1;               //Active Low
         dec_cur_bit_cnt     <=  1'b0;
         dec_cur_addr_cnt    <=  1'b0;
-        d_written           <=  1'b1;              //Strangly I think it makes more logical sense for this to start on
         write_cmpl          <=  1'b0;
+        done_led_on_reg     <=  1'b0;
         /* Logic and Physical State FSM Spacer */ 
         phy_state_reg       <=  IDLE;
-        scl_read_lreg       <=  scl_read_filter;    //Doesn't really matter what it takes on upon reset
     end 
     else begin
         delay_in_reg        <=  delay_in_next;
@@ -143,7 +138,6 @@ always_ff @(posedge CLK) begin
         cur_bit             <=  cur_bit_next;
         done_reg            <=  done_next;
         state_reg           <=  state_next;
-        state_last          <=  state_last_next;
         scl_t_reg           <=  scl_t_next;
         scl_read_reg        <=  scl_read_filter;
         sda_t_reg           <=  sda_t_next;
@@ -152,12 +146,10 @@ always_ff @(posedge CLK) begin
         rst_clkgen_reg      <=  rst_clkgen_next;
         dec_cur_bit_cnt     <=  dec_cur_bit_cnt_next;
         dec_cur_addr_cnt    <=  dec_cur_addr_cnt_next;
-        d_written           <=  d_written_next;
         write_cmpl          <=  write_cmpl_next;
+        done_led_on_reg     <=  done_led_on_next;
         /* Logic and Physical State FSM Spacer */ 
         phy_state_reg       <=  phy_state_next;
-        phy_wait_flag       <=  phy_wait_flag_next;
-        scl_read_lreg       <=  scl_read_lnext;
     end
 end
 
@@ -167,25 +159,20 @@ always_comb begin
     cur_addr_next           =   cur_addr;
     cur_bit_next            =   cur_bit;
     state_next              =   state_reg;
-    state_last_next         =   state_last;
     scl_t_next              =   scl_t_reg;
     sda_t_next              =   sda_t_reg;
     sda_write_next          =   sda_write_reg;
     rst_clkgen_next         =   rst_clkgen_reg;
     dec_cur_bit_cnt_next    =   dec_cur_bit_cnt;
     dec_cur_addr_cnt_next   =   dec_cur_addr_cnt;
-    d_written_next          =   d_written;
     write_cmpl_next         =   write_cmpl;
-    scl_read_lnext          =   scl_read_lreg;
     done_next               =   done_reg;
 
     delay_rst_next          =   delay_rst_reg;
+    done_led_on_next        =   done_led_on_reg;
 
     case(state_reg)
-        /** You get to Idle either after we finish everything or at the very beggining
-        * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Signal
-        `* We are not using a multi-master bus so it should be like when the lines stabalize after startup 
-        * When I flip the dumb switch on the board yeet */      
+
         IDLE : begin
             if(phy_state_reg == READY && reset == 0) begin
                 state_next          =   START_SEND; 
@@ -197,7 +184,6 @@ always_comb begin
                 delay_rst_next          =   1'b1;
 
                 state_next              =   IDLE;
-                state_last_next         =   IDLE;
                 scl_t_next              =   1'b0;
                 sda_t_next              =   1'b0;
                 rst_clkgen_next         =   1'b1;
@@ -210,7 +196,6 @@ always_comb begin
         /* Set _t's to '1' so that 'Write' is put onto the IO, Reset Clk Gen, & set SDA low */  
         START_SEND : begin    
             state_next          =   WRITE_CLPD_ADDR;
-            state_last_next     =   START_SEND;
             scl_t_next          =   1'b1;           //Output CLK Gen onto IO pin 
             sda_t_next          =   1'b1;           //Write the writes to the Pins
             sda_write_next      =   1'b0;           //Set SDA Low
@@ -220,7 +205,6 @@ always_comb begin
 
             delay_rst_next      =   1'b0;
         end  
-
 
         REPEATED_START : begin
             case(phy_state_reg)
@@ -250,12 +234,8 @@ always_comb begin
                     end
                 end
             endcase
-
-      
         end
 
-
-        //THE NEW WRITE!!
         WRITE_ADDRESS   : begin
             //First time we enter turn of the CLK Reset
             if(!rst_clkgen_reg) begin
@@ -330,6 +310,7 @@ always_comb begin
                 PHY_STATE_2 :    state_next = WAIT_FOR_ACK;
 
                 //Now we are in the low after a complete Addr send. Release SDA and wait for it to go high again
+                //Key to note, we waited for PHy1 and 2 because we had to let final bit propagate
                 PHY_STATE_3 : begin
                     sda_t_next      =   1'b0;   //Release SDA
                     write_cmpl_next =   1'b0;   //We have successfully entered PHY3 so we can set this back to 0
@@ -369,10 +350,42 @@ always_comb begin
         end
 
 
-        /* Stop Condition. We successfully send data, send the next thing or just let the BUS idle */
+        /* Stop Condition. like in ACK we wait til the ACK clk rise ends, when scl goes low we SET SDA low
+        *  When SCL falls, make sure SDA is low, then when it goes high set SDA to high to send start sig*/
         STOP : begin
-            state_next  =   STOP;
-            done_led_on =   1'b1;
+            //Do the same thing as ACK wait for 4 to return to 1. set SDA to high
+            case(phy_state_reg)
+                PHY_STATE_4 : begin
+                    state_next      =   STOP;
+                    delay_rst_next  =   1'b0;
+                end
+                //SCL dropped after the ack bit. So set sda low so we can raise it again
+                PHY_STATE_1 : begin
+                    if(delay_rst_reg) begin
+                        state_next      =   STOP;
+                        delay_rst_next  =   1'b1;
+                    end
+                    //Don't need to do the final if, the fact next is set to last by default it will stay
+                    //Inside of repeated start til after the delay triggers (Written while jamming to Chvrches)
+                    else if (!delay_out) begin
+                        state_next      =   STOP;
+                        delay_rst_next  =   1'b0;
+                        sda_write_next  =   1'b0;
+                    end
+                end
+                
+                //SCL raises release SDA to send STOP
+                PHY_STATE_2 : begin
+                    sda_t_next  =  1'b0;
+                    state_next  =  BOARD_LED;
+                end
+
+            endcase
+        end
+
+        //Literally everything is done just turn on the board LED and sit around
+        BOARD_LED : begin
+            done_led_on_next    =   1'b1;
         end
 
         default : begin 
