@@ -19,7 +19,8 @@ module fmc_i2c_controller(
     output wire scl_i,
     output wire scl_t,
     output wire sda_i,
-    output wire sda_t
+    output wire sda_t,
+    output done_led
 );
 
 //State, well states 
@@ -57,7 +58,10 @@ reg dec_cur_bit_cnt;        logic dec_cur_bit_cnt_next;
 reg dec_cur_addr_cnt;       logic dec_cur_addr_cnt_next;        //#TODO bro called it Dec address when the value increments 
 reg write_cmpl;             logic write_cmpl_next;
 reg delay_rst_reg = 1'b0;   logic delay_rst_next;              // Idk fuck it initialize here 
+reg done_reg;               logic done_next;
 
+wire done_led_on;
+assign done_led = done_led_on;
 
 assign phy_wait_flag_next = ((phy_state_reg == PHY_WAIT_1) || (phy_state_reg == PHY_WAIT_2));
 
@@ -115,6 +119,7 @@ always_ff @(posedge CLK) begin
         delay_rst_reg       <=  1'b1;       
         cur_addr            <=  2'b0;
         cur_bit             <=  3'h7;
+        done_reg            <=  1'b0;
         state_reg           <=  IDLE;    
         state_last          <=  IDLE;
         scl_t_reg           <=  1'b0;
@@ -136,6 +141,7 @@ always_ff @(posedge CLK) begin
         delay_rst_reg       <=  delay_rst_next;
         cur_addr            <=  cur_addr_next;
         cur_bit             <=  cur_bit_next;
+        done_reg            <=  done_next;
         state_reg           <=  state_next;
         state_last          <=  state_last_next;
         scl_t_reg           <=  scl_t_next;
@@ -171,6 +177,7 @@ always_comb begin
     d_written_next          =   d_written;
     write_cmpl_next         =   write_cmpl;
     scl_read_lnext          =   scl_read_lreg;
+    done_next               =   done_reg;
 
     delay_rst_next          =   delay_rst_reg;
 
@@ -215,45 +222,36 @@ always_comb begin
         end  
 
 
-         // /** ACK Not Received So start again from WRITE CLPD, or from I2c, or I2c Select successful 
-        // *   so repeat start send so that we can begin sending CLPD address
-        // *   We do the same thing as A Stop condition except we want to go from high to low on sda     */  
-        // REPEATED_START : begin
-        //     //Wait for SCL To go low
-        //     //Shit middle thing starts at 0. so 
-        //     if ( !scl_read_repeat_lreg && scl_read_reg) begin
-        //         state_next          =   REPEATED_START;
-        //     end
-        //     //SCL goes low, bring SDA high so I can bring it down again
-        //     else if (!scl_read_repeat_lreg && !scl_read_reg) begin
-        //         state_next          =   REPEATED_START;
-        //         sda_write_next      =   1'b1;
-        //         scl_read_repeat_lnext   =   1'b1;   //#TODO REMOVE and make PHY State Better
-        //     end 
-        //     //SCl Went back to high, now its time to set SDA to 0 to indicate start bit sent
-        //     else if (scl_read_repeat_lreg && scl_read_reg) begin
-        //         if(state_last == SET_I2CSW_FMC || state_last == SET_I2CSW_FMC) begin
-        //             state_next      =   WRITE_I2C_SW;
-        //         end
-        //         else begin
-        //             state_next          =   WRITE_CLPD_ADDR;
-        //         end
-        //         //potentially we can send a start bit here. Or not
-        //         sda_write_next      =   1'b0;   //Indicate we start back up yeet
-        //         scl_read_repeat_lnext   =   1'b0; //#TODO REMOVE and make PHY State Better  Just make it 0
-        //     end
-        // end
         REPEATED_START : begin
             case(phy_state_reg)
                 PHY_STATE_4 :     state_next = REPEATED_START; //Wait for SCL to drop low again
                 //SCL drops low again so bring SDA high so I can bring it down again to send another Start bit
                 PHY_STATE_1 : begin
                     state_next      =   REPEATED_START;
+                    //Don't need to wait for the delay because it doesn't really matter
                     sda_write_next  =   1'b1;
+                    delay_rst_next  =   1'b0;
                 end
-
+                //SCL Goes high, goooo looow on SDA to indicated a repeated start bit
+                PHY_STATE_2 : begin
+                    state_next          =   REPEATED_START;
+                    //Reset the delay 
+                    if(delay_rst_reg) begin
+                        state_next      =   REPEATED_START;
+                        delay_rst_next  =   1'b1;   
+                    end 
+                    //Don't need to do the final if, the fact next is set to last by default it will stay
+                    //Inside of repeated start til after the delay triggers (Written while jamming to Anna Sun)
+                    else if (!delay_out) begin
+                        //We are so back set the SDA to 0 to indicate a start and return to Write Address
+                        state_next      =   WRITE_ADDRESS;
+                        delay_rst_next  =   1'b0;
+                        sda_write_next  =   1'b0;
+                    end
+                end
             endcase
-            //It was so over, But we are so back. 
+
+      
         end
 
 
@@ -264,13 +262,13 @@ always_comb begin
                 state_next          = WRITE_ADDRESS;
                 rst_clkgen_next     = 1'b1;
             end
-            
+
             case(phy_state_reg) 
                 PHY_START_BIT :     state_next = WRITE_ADDRESS;  //Still in startup
                 
                 //The Line is ready, wait for delay and set a SDA Bit.
                 PHY_STATE_1 : begin 
-                    //We got here after a successful ack, and need to turn off the reset on the delay
+                    //We got here after a successful ack, or a repeated start and need to turn off the reset on the delay
                     //Done so that we can get the same delay on the next bit 
                     if (delay_rst_reg) begin
                         state_next      =   WRITE_ADDRESS;
@@ -320,8 +318,12 @@ always_comb begin
                     state_next = WAIT_FOR_ACK;
                     //Since we are doing nothing else here decrement the Cur address because why not
                     if(dec_cur_addr_cnt_next) begin
-                        cur_addr_next           =   cur_addr + 1'b1;
                         dec_cur_addr_cnt_next   =   1'b0;
+                        //We finished all the sends Pog Champ
+                        if(cur_addr == 2'b11) 
+                            done_next       =   1'b1;
+                        else 
+                            cur_addr_next   =   cur_addr + 1'b1;
                     end    
                 end    
 
@@ -329,8 +331,8 @@ always_comb begin
 
                 //Now we are in the low after a complete Addr send. Release SDA and wait for it to go high again
                 PHY_STATE_3 : begin
-                    sda_t_next          =   1'b0;   //Release SDA
-                    write_cmpl_next     =   1'b0;   //We have successfully entered PHY3 so we can set this back to 0
+                    sda_t_next      =   1'b0;   //Release SDA
+                    write_cmpl_next =   1'b0;   //We have successfully entered PHY3 so we can set this back to 0
                 end
 
                 PHY_STATE_4 : begin
@@ -345,16 +347,21 @@ always_comb begin
                         
                         //If successful ACK will be low
                         if(!sda_read_reg) begin    
-                            state_next          =   WRITE_ADDRESS;  //LETS GOOOOO!!!!!!! *Soy Face*
-                            delay_rst_next      =   1'b0;           //Allows for delay again by resetting it
+                            //If we Completely finished the write go to STOP
+                            if(done_next)
+                                state_next      =   STOP;
+                            else begin
+                                state_next      =   WRITE_ADDRESS;  //LETS GOOOOO!!!!!!! *Soy Face*
+                                delay_rst_next  =   1'b0;           //Allows for delay again by resetting it
+                            end
                         end
                         //ACK Failed, its so jover
                         else begin
-                            state_next          =   REPEATED_START;
-                            delay_rst_next      =   1'b0;           //Allows for delay again by resetting it
+                            state_next      =   REPEATED_START;
+                            delay_rst_next  =   1'b0;           //Allows for delay again by resetting it
                             //We failed so if we didn't get to the switch change go back to 0
                             //If we go through the switch address, go back to the the beginning of the address CLPD
-                            cur_addr_next       =   (cur_addr < 2) ? (2'b00) : (2'b10);
+                            cur_addr_next   =   (cur_addr < 2) ? (2'b00) : (2'b10);
                         end
                     end
                 end
@@ -365,7 +372,7 @@ always_comb begin
         /* Stop Condition. We successfully send data, send the next thing or just let the BUS idle */
         STOP : begin
             state_next  =   STOP;
-            // #TODO Turn on some LED on the board to indicate we got here.
+            done_led_on =   1'b1;
         end
 
         default : begin 
@@ -446,6 +453,10 @@ always_comb begin
                 else 
                     phy_state_next      =   PHY_STATE_1;   
             end
+
+            //Unrelated if to check if we are inside of repeated start and if so to set Delay_in to 1
+            if(state_reg == REPEATED_START) 
+                delay_in_next = 1'b1;
         end
 
         /**         ______       Line looks like this upon entrying to this block
