@@ -20,7 +20,7 @@ module shift_reg #(
 reg [WIDTH-1:0] delay_reg;
 
 always_ff @(posedge CLK) begin
-    if(rst) 
+    if(!rst) 
         delay_reg <= 0;
     else begin
         delay_reg <= {delay_reg[WIDTH-2:0], in};
