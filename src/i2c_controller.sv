@@ -73,10 +73,11 @@ reg sda_write_reg;          logic sda_write_next;
 reg sda_read_reg;
 reg rst_clkgen_reg;         logic rst_clkgen_next;
 reg d_written;              logic d_written_next;
+reg delay_rst_reg;          logic delay_rst_next;
+
 
 /* Logic and Physical State FSM Spacer */ 
 reg [2:0] phy_state_reg;    logic [2:0] phy_state_next;
-reg [2:0] phy_state_lreg;   logic [2:0] phy_state_lnext; 
 reg scl_read_lreg;          logic scl_read_lnext; 
 reg scl_read_repeat_lreg;   logic scl_read_repeat_lnext;       //#TODO REMOVE and make PHY State Better
 //Addresses needed To send last two bits of CLPD Addr are a guess based of the doc, change if doesn't work
@@ -102,7 +103,9 @@ ff_filter #( .STAGES(2) ) sda_filter( .clk(CLK), ._in(sda_o), ._out(sda_read_fil
 
 //Shift Register used to create a 400ns Delay on the line 
 reg delayed_out;     //When 240 ns has passed, this will flip to 1 and we are no longer held
-reg delay_in_reg;  wire delay_in_next;  wire delay_rst;  
+reg delay_in_reg;  wire delay_in_next;  wire delay_rst; 
+// #TODO HOly shit this code needs to be cleaned up
+assign delay_rst = delay_rst_reg; 
 shift_reg #( .WIDTH(12)) delay_sda_write( CLK, delay_rst, delay_in, delayed_out ); 
 
 // Reset and register storage / procedural logic to coincide with the FSM logic.
@@ -126,7 +129,6 @@ always_ff @(posedge CLK) begin
         write_cmpl          <=  1'b0;
         /* Logic and Physical State FSM Spacer */ 
         phy_state_reg       <=  IDLE;
-        phy_state_lreg      <=  IDLE;        
         scl_read_lreg       <=  scl_read_filter;    //Doesn't really matter what it takes on upon reset
     end 
     else begin
@@ -148,7 +150,6 @@ always_ff @(posedge CLK) begin
         ack_success         <=  ack_success_next;
         /* Logic and Physical State FSM Spacer */ 
         phy_state_reg       <=  phy_state_next;
-        phy_state_lreg      <=  phy_state_lnext;
         phy_wait_flag       <=  phy_wait_flag_next;
         scl_read_lreg       <=  scl_read_lnext;
     end
@@ -303,33 +304,52 @@ always_comb begin
             //When we enter this state Physical State is still in PHY_STATE_1. 
             //In meantime I can decrement the ADDR but think about before doing
             case(phy_state_reg) 
-                PHY_STATE_1 :    state_next = WAIT_FOR_ACK;  //Bing Chilling
-                PHY_STATE_2 :    state_next = WAIT_FOR_ACK;  //Bing Chilling
+                PHY_STATE_1 : begin
+                    state_next = WAIT_FOR_ACK;
+                    //Since we are doing nothing else here decrement the Cur address because why not
+                    if(dec_cur_addr_cnt_next) begin
+                        cur_addr_next           =   cur_addr - 1;
+                        dec_cur_addr_cnt_next   =   1'b0;
+                    end    
+                end    
+
+                PHY_STATE_2 :    state_next = WAIT_FOR_ACK;
                 
+                //Now we are in the low after a complete Addr send. Release SDA and wait for it to go high again
                 PHY_STATE_3 : begin
                     sda_t_next          =   1'b0;   //Release SDA
                     write_cmpl_next     =   1'b0;   //We have successfully entered PHY3 so we can set this back to 0
                 end
 
                 PHY_STATE_4 : begin
-                    cur_bit_next    =   3'h7;       //Reset the Count regardless of where we go next
+                    //Wait the delay period so we are clearly inside of SCL before checking 
+                    if(!delayed_out) 
+                        state_next      =   WAIT_FOR_ACK; 
                     //Now we check to see the SDA has been held low by the Slave/Reciever
-                    if( !sda_read_reg ) begin
-                        
-                        
-                        sda_t_next      =   1'b1;       //Re-assert control over SDA=
-                        cur_addr_next   =   cur_addr-1; //Drop address index by 1 so we are setup to send the next addr
-                        ack_success_next        =   1'b0;
+                    else begin
+                        cur_bit_next    =   3'h7;       //Reset the Count regardless of where we go next
+                        //If successful ACK will be low
+                        if(!sda_read_reg) begin
+                            
+                            sda_t_next          =   1'b1;       //Re-assert control over SDA
+                            ack_success_next    =   1'b0;
+                            state_next          =   
 
+                        end
 
                     end
+                    
+  
+
+
+                end
                     //ACK failed, its so jover
                     else begin
                         sda_t_next      =   1'b1;           //Re-assert control over SDA
                         state_next      =   REPEATED_START; 
                         ack_success_next     
                         if(cur_addr < 3) begin
-                            cur_addr_next   = 
+                            cur_addr_next   = Wroit
                         end
                     end
 
@@ -355,47 +375,34 @@ end
 always_comb begin
     //Default values wires take on if not changed in FSM. 
     phy_state_next      =   phy_state_reg;
-    phy_state_lnext     =   phy_state_lreg;
     delay_in_next       =   delay_in_reg;
 
     case(phy_state_reg) 
         /** Physical State is in IDLE when RESET is Triggered, I.E we don't want to do anything Yet */
         IDLE : begin
-            if(reset == 1) begin
+            if(reset == 1) 
                 phy_state_next      =   IDLE;
-                phy_state_lnext     =   IDLE;
-            end
             //When out of Reset we can go on to the READY
-            else begin
+            else 
                 phy_state_next      =   READY;
-                phy_state_lnext     =   IDLE;
-            end
         end
 
         /** Ready to rock, indicates to the other state machine we are good to go and it can enter start
         *   Potentially in the future #TODO implement a check to ensure that the line is low, i.e. high for x cycles  */
         READY : begin
             //Wait til Filtered SDA_O goes low, while SCL is still high then go to Start State
-            if( !(sda_read_reg) && scl_read_reg) begin
+            if( !(sda_read_reg) && scl_read_reg)
                 phy_state_next      =   PHY_START_BIT;        
-                phy_state_lnext     =   READY;  
-            end
-            else begin
+            else 
                 phy_state_next      =   READY;
-                phy_state_lnext     =   READY;
-            end
         end
 
         /** START BIT STATE. Wait for SCL to go low, then go wait to send */
         PHY_START_BIT : begin
-            if(scl_read_reg) begin
+            if(scl_read_reg) 
                 phy_state_next      =   PHY_START_BIT;
-                phy_state_lnext     =   PHY_START_BIT;
-            end
-            else begin
+            else 
                 phy_state_next      =   PHY_STATE_1;
-                phy_state_lnext     =   PHY_START_BIT;
-            end
         end
 
         /**       ____          After Leaving Start Bit our system Looks like this. So we just fire the delay
@@ -411,13 +418,10 @@ always_comb begin
         PHY_STATE_1 : begin
             delay_in_next = 1'b1;    //Feed in the value so the write address can write the output when it hits 1
             //Hold this state til the SCL rises
-            if(scl_read_reg) begin
+            if(scl_read_reg) 
                 phy_state_next      =   PHY_STATE_2;
-                phy_state_lnext     =   PHY_STATE_1;
-            end
             else
                 phy_state_next      =   PHY_STATE_1;
-                phy_state_lnext     =   PHY_STATE_1;
         end
     
         /**     ___     _____     The Current SDA BIT is asserted on the Line
@@ -428,22 +432,16 @@ always_comb begin
         PHY_STATE_2 : begin
             //Instead of having to reset it, if I just feed it 0's it will be 0 next time we need to use it 
             delay_in_next = 1'b0;    
-            if(scl_read_reg) begin
-                phy_state_next      =   PHY_STATE_2;
-                phy_state_lnext     =   PHY_STATE_2;
-            end 
+            if(scl_read_reg) 
+                phy_state_next      =   PHY_STATE_2; 
             //SCL dropped
             else begin
                 //If we are done with the addr send it to PHY_STATE_3 
-                if(write_cmpl) begin
+                if(write_cmpl)
                     phy_state_next      =   PHY_STATE_3;
-                    phy_state_lreg      =   PHY_STATE_2;
-                end
                 //Else We send it back to PHY_STATE_1 to continue the current Transaction
-                else begin
-                    phy_state_next      =   PHY_STATE_1;
-                    phy_state_lnext     =   PHY_STATE_1;
-                end
+                else 
+                    phy_state_next      =   PHY_STATE_1;   
             end
         end
 
@@ -453,23 +451,28 @@ always_comb begin
         *    scl \___/   \_                                 
         */
         PHY_STATE_3 : begin
-            //Delay In taken care of so don't gotta Care.
-            if(scl_read_reg) begin
+            if(scl_read_reg) 
                 phy_state_next      =   PHY_STATE_4;
-                phy_state_lnext     =   PHY_STATE_3;
-            end else begin
+            else 
                 phy_state_next      =   PHY_STATE_3;
-                phy_state_lnext     =   PHY_STATE_3;
-            end
         end
 
-        /**         ______              We now wait for the ACK
+        /**         ______              In this state, we use delay in next to in
         *   sda  __X______X____????       
         *             ___     _          
         *    scl \___/   \___/                               
         */
         PHY_STATE_4 : begin
-            
+            //turn on the delay because although the SDA should already be low by the time the SCL rises
+            //I'm still going to wait to an arbitray point a few 100 ns inside of SCl to check it
+            delay_in_next = 1'b1;
+            //Hold State til SCL drops low
+            if(scl_read_reg) 
+                phy_state_next      =   PHY_STATE_4;
+            //When it falls again return to Phy_state_1 
+            else 
+                phy_state_next      =   PHY_STATE_1;
+
         end
        
     
