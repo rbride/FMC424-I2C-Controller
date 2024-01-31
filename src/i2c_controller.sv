@@ -20,41 +20,40 @@ module fmc_i2c_controller(
     output wire scl_t,
     output wire sda_i,
     output wire sda_t,
-    output done_led
+    output wire done_led
 );
 
 //State, well states 
-localparam [3:0]
-    IDLE                    =   4'b0000,
-    START_SEND              =   4'b0001,
-    REPEATED_START          =   4'b0010,
-    
-    WRITE_ADDRESS           =   4'b0011,
-    
-    BOARD_LED               =   4'b1010,
-
-    WAIT_FOR_ACK            =   4'b1110,
-    STOP                    =   4'b1111;
+localparam [2:0]
+    IDLE                    =   3'b000,
+    START_SEND              =   3'b001,
+    REPEATED_START          =   3'b010,
+    WRITE_ADDRESS           =   3'b011,
+    WAIT_FOR_ACK            =   3'b100,
+    STOP                    =   3'b101,
+    BOARD_LED               =   3'b110;
 //Physical State States
 localparam [2:0]
-    IDLE                        =   3'b000,
-    READY                       =   3'b001,
+    PHY_IDLE                    =   3'b000,
+    PHY_READY                   =   3'b001,
     PHY_START_BIT               =   3'b010,
     PHY_STATE_1                 =   3'b011,
     PHY_STATE_2                 =   3'b100,
-    PHY_STATE_3                 =   3'b101;
+    PHY_STATE_3                 =   3'b101,
+    PHY_STATE_4                 =   3'b110;    
 
 
-reg [7:0] addr_mem [0:4];
-addr_mem[0]     =   8'b1110_001_0;      //I2C Bus SW Addr + 0 for write
-addr_mem[1]     =   8'b1000_0000;       //I2C Channel Select Register value to be written
-addr_mem[2]     =   8'b01111_10_0;      //CLPD address + 0 for write
-addr_mem[3]     =   8'b0000_0010;       //CLPD Control Register
-addr_mem[4]     =   8'b0000_0001;       //Value to be written to the control register to Turn the light on
+reg [4:0][7:0] addr_mem =  {
+                            8'b0000_0001,   //Value to be written to the control register to Turn the light on
+                            8'b0000_0010,   //CLPD Control Register
+                            8'b01111_10_0,  //CLPD address + 0 for write
+                            8'b1000_0000,   //I2C Channel Select Register value to be written
+                            8'b1110_001_0   //I2C Bus SW Addr + 0 for write
+                           };
 
 //Stuff added by redesign re-org
-reg cur_addr[1:0] = 2'b0;   wire cur_addr_next;
-reg cur_bit [2:0] = 3'h7;   wire cur_bit_next;
+reg [1:0]cur_addr = 2'b0;   logic cur_addr_next;
+reg [2:0]cur_bit  = 3'h7;   logic cur_bit_next;
 reg dec_cur_bit_cnt;        logic dec_cur_bit_cnt_next;   
 reg dec_cur_addr_cnt;       logic dec_cur_addr_cnt_next;        //#TODO bro called it Dec address when the value increments 
 reg write_cmpl;             logic write_cmpl_next;
@@ -103,10 +102,10 @@ ff_filter #( .STAGES(2) ) sda_filter( .clk(CLK), ._in(sda_o), ._out(sda_read_fil
 
 //Shift Register used to create a 400ns Delay on the line 
 reg delayed_out;     //When 240 ns has passed, this will flip to 1 and we are no longer held
-reg delay_in_reg;  wire delay_in_next;  wire delay_rst; 
+reg delay_in_reg;  logic delay_in_next;  wire delay_rst; 
 // #TODO HOly shit this code needs to be cleaned up
 assign delay_rst = delay_rst_reg; 
-shift_reg #( .WIDTH(12)) delay_sda_write( CLK, delay_rst, delay_in, delayed_out ); 
+shift_reg #( .WIDTH(12)) delay_sda_write( CLK, delay_rst, delay_in_reg, delayed_out ); 
 
 // Reset and register storage / procedural logic to coincide with the FSM logic.
 always_ff @(posedge CLK) begin
@@ -129,7 +128,7 @@ always_ff @(posedge CLK) begin
         write_cmpl          <=  1'b0;
         done_led_on_reg     <=  1'b0;
         /* Logic and Physical State FSM Spacer */ 
-        phy_state_reg       <=  IDLE;
+        phy_state_reg       <=  PHY_IDLE;
     end 
     else begin
         delay_in_reg        <=  delay_in_next;
@@ -174,7 +173,7 @@ always_comb begin
     case(state_reg)
 
         IDLE : begin
-            if(phy_state_reg == READY && reset == 0) begin
+            if(phy_state_reg == PHY_READY && reset == 0) begin
                 state_next          =   START_SEND; 
             end
             //Otherwise make sure everything is returned to default
@@ -195,7 +194,7 @@ always_comb begin
 
         /* Set _t's to '1' so that 'Write' is put onto the IO, Reset Clk Gen, & set SDA low */  
         START_SEND : begin    
-            state_next          =   WRITE_CLPD_ADDR;
+            state_next          =   WRITE_ADDRESS;
             scl_t_next          =   1'b1;           //Output CLK Gen onto IO pin 
             sda_t_next          =   1'b1;           //Write the writes to the Pins
             sda_write_next      =   1'b0;           //Set SDA Low
@@ -226,7 +225,7 @@ always_comb begin
                     end 
                     //Don't need to do the final if, the fact next is set to last by default it will stay
                     //Inside of repeated start til after the delay triggers (Written while jamming to Anna Sun)
-                    else if (!delay_out) begin
+                    else if (!delayed_out) begin
                         //We are so back set the SDA to 0 to indicate a start and return to Write Address
                         state_next      =   WRITE_ADDRESS;
                         delay_rst_next  =   1'b0;
@@ -265,7 +264,7 @@ always_comb begin
                         end
                     end
                     else begin
-                        if ( |cur_bit ) begin
+                        if ( cur_bit != 0) begin
                             sda_write_next          =   addr_mem[cur_addr][cur_bit];
                             state_next              =   WRITE_ADDRESS;
                             //Done here and above, redundant but don't care, rather do it twice then not when I am suppose to
@@ -367,7 +366,7 @@ always_comb begin
                     end
                     //Don't need to do the final if, the fact next is set to last by default it will stay
                     //Inside of repeated start til after the delay triggers (Written while jamming to Chvrches)
-                    else if (!delay_out) begin
+                    else if (!delayed_out) begin
                         state_next      =   STOP;
                         delay_rst_next  =   1'b0;
                         sda_write_next  =   1'b0;
@@ -402,22 +401,22 @@ always_comb begin
 
     case(phy_state_reg) 
         /** Physical State is in IDLE when RESET is Triggered, I.E we don't want to do anything Yet */
-        IDLE : begin
+        PHY_IDLE : begin
             if(reset == 1) 
-                phy_state_next      =   IDLE;
+                phy_state_next      =   PHY_IDLE;
             //When out of Reset we can go on to the READY
             else 
-                phy_state_next      =   READY;
+                phy_state_next      =   PHY_READY;
         end
 
         /** Ready to rock, indicates to the other state machine we are good to go and it can enter start
         *   Potentially in the future #TODO implement a check to ensure that the line is low, i.e. high for x cycles  */
-        READY : begin
+        PHY_READY : begin
             //Wait til Filtered SDA_O goes low, while SCL is still high then go to Start State
             if( !(sda_read_reg) && scl_read_reg)
                 phy_state_next      =   PHY_START_BIT;        
             else 
-                phy_state_next      =   READY;
+                phy_state_next      =   PHY_READY;
         end
 
         /** START BIT STATE. Wait for SCL to go low, then go wait to send */
