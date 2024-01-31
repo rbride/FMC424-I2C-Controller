@@ -49,14 +49,15 @@ addr_mem[2]     =   8'b01111_10_0;      //CLPD address + 0 for write
 addr_mem[3]     =   8'b0000_0010;       //CLPD Control Register
 addr_mem[4]     =   8'b0000_0001;       //Value to be written to the control register to Turn the light on
 
+//Stuff added by redesign re-org
 reg cur_addr[1:0] = 2'b0;   wire cur_addr_next;
 reg cur_bit [2:0] = 3'h7;   wire cur_bit_next;
 reg phy_wait_flag;          logic phy_wait_flag_next;
-
 reg dec_cur_bit_cnt;        logic dec_cur_bit_cnt_next;   
-reg dec_cur_addr_cnt;       logic dec_cur_addr_cnt_next; 
+reg dec_cur_addr_cnt;       logic dec_cur_addr_cnt_next;        //#TODO bro called it Dec address when the value increments 
 reg write_cmpl;             logic write_cmpl_next;
-reg ack_success;            logic ack_success_next;
+reg delay_rst_reg = 1'b0;   logic delay_rst_next;              // Idk fuck it initialize here 
+
 
 assign phy_wait_flag_next = ((phy_state_reg == PHY_WAIT_1) || (phy_state_reg == PHY_WAIT_2));
 
@@ -73,13 +74,11 @@ reg sda_write_reg;          logic sda_write_next;
 reg sda_read_reg;
 reg rst_clkgen_reg;         logic rst_clkgen_next;
 reg d_written;              logic d_written_next;
-reg delay_rst_reg;          logic delay_rst_next;
 
 
 /* Logic and Physical State FSM Spacer */ 
 reg [2:0] phy_state_reg;    logic [2:0] phy_state_next;
 reg scl_read_lreg;          logic scl_read_lnext; 
-reg scl_read_repeat_lreg;   logic scl_read_repeat_lnext;       //#TODO REMOVE and make PHY State Better
 //Addresses needed To send last two bits of CLPD Addr are a guess based of the doc, change if doesn't work
 reg [6:0] CLPD_ADDR         = 7'b01111_10;
 reg [7:0] CLPD_CTRL_REG     = 8'b0000_0010;
@@ -113,6 +112,7 @@ always_ff @(posedge CLK) begin
     //Initial Values 
     if(reset) begin
         delay_in_reg        <=  1'b0;
+        delay_rst_reg       <=  1'b1;       
         cur_addr            <=  2'b0;
         cur_bit             <=  3'h7;
         state_reg           <=  IDLE;    
@@ -133,6 +133,7 @@ always_ff @(posedge CLK) begin
     end 
     else begin
         delay_in_reg        <=  delay_in_next;
+        delay_rst_reg       <=  delay_rst_next;
         cur_addr            <=  cur_addr_next;
         cur_bit             <=  cur_bit_next;
         state_reg           <=  state_next;
@@ -147,7 +148,6 @@ always_ff @(posedge CLK) begin
         dec_cur_addr_cnt    <=  dec_cur_addr_cnt_next;
         d_written           <=  d_written_next;
         write_cmpl          <=  write_cmpl_next;
-        ack_success         <=  ack_success_next;
         /* Logic and Physical State FSM Spacer */ 
         phy_state_reg       <=  phy_state_next;
         phy_wait_flag       <=  phy_wait_flag_next;
@@ -170,11 +170,10 @@ always_comb begin
     dec_cur_addr_cnt_next   =   dec_cur_addr_cnt;
     d_written_next          =   d_written;
     write_cmpl_next         =   write_cmpl;
-    ack_success_next        =   ack_success;
     scl_read_lnext          =   scl_read_lreg;
-    //#TODO REMOVE and make PHY State Better
-    scl_read_repeat_lnext   = scl_read_repeat_lreg;
-    
+
+    delay_rst_next          =   delay_rst_reg;
+
     case(state_reg)
         /** You get to Idle either after we finish everything or at the very beggining
         * The purpose of Idle is to wait for SCL and SDA to be high so we can send a start Signal
@@ -188,6 +187,7 @@ always_comb begin
             else begin 
                 cur_bit_next            =   3'h7;
                 cur_addr_next           =   2'b00;
+                delay_rst_next          =   1'b1;
 
                 state_next              =   IDLE;
                 state_last_next         =   IDLE;
@@ -197,7 +197,6 @@ always_comb begin
                 dec_cur_bit_cnt_next    =   1'b0;
                 dec_cur_addr_cnt_next   =   1'b0;
 
-                ack_success_next        =   1'b0;
             end
         end
 
@@ -208,11 +207,11 @@ always_comb begin
             scl_t_next          =   1'b1;           //Output CLK Gen onto IO pin 
             sda_t_next          =   1'b1;           //Write the writes to the Pins
             sda_write_next      =   1'b0;           //Set SDA Low
-
+            
             rst_clkgen_next     =   1'b0;           //Reset, reset fires on low
             write_cmpl_next     =   1'b0;
 
-            ack_success_next    =   1'b0;
+            delay_rst_next      =   1'b0;
         end  
 
 
@@ -245,7 +244,16 @@ always_comb begin
         //     end
         // end
         REPEATED_START : begin
+            case(phy_state_reg)
+                PHY_STATE_4 :     state_next = REPEATED_START; //Wait for SCL to drop low again
+                //SCL drops low again so bring SDA high so I can bring it down again to send another Start bit
+                PHY_STATE_1 : begin
+                    state_next      =   REPEATED_START;
+                    sda_write_next  =   1'b1;
+                end
 
+            endcase
+            //It was so over, But we are so back. 
         end
 
 
@@ -258,11 +266,17 @@ always_comb begin
             end
             
             case(phy_state_reg) 
-                PHY_START_BIT :     state_next  =   WRITE_ADDRESS;  //Still in startup
+                PHY_START_BIT :     state_next = WRITE_ADDRESS;  //Still in startup
                 
                 //The Line is ready, wait for delay and set a SDA Bit.
                 PHY_STATE_1 : begin 
-                    if(!delayed_out) begin
+                    //We got here after a successful ack, and need to turn off the reset on the delay
+                    //Done so that we can get the same delay on the next bit 
+                    if (delay_rst_reg) begin
+                        state_next      =   WRITE_ADDRESS;
+                        delay_rst_next  =   1'b1; //Turn 'er off m8
+                    end
+                    else if(!delayed_out) begin
                         state_next  =   WRITE_ADDRESS;
                         //Decrement Counter once in the Delay Period
                         if(dec_cur_bit_cnt) begin
@@ -270,7 +284,6 @@ always_comb begin
                             cur_bit_next            =   cur_bit-1'b1;
                             //Done here and below, redundant but don't care, rather do it twice then not when I am suppose to
                             write_cmpl_next         =   1'b0;
-                            ack_success_next        =   1'b0;
                         end
                     end
                     else begin
@@ -279,7 +292,6 @@ always_comb begin
                             state_next              =   WRITE_ADDRESS;
                             //Done here and above, redundant but don't care, rather do it twice then not when I am suppose to
                             write_cmpl_next         =   1'b0;      
-                            ack_success_next        =   1'b0;
 
                         end 
                         //We are on the Last Bit of the Send, so we need to send it to ACK
@@ -308,13 +320,13 @@ always_comb begin
                     state_next = WAIT_FOR_ACK;
                     //Since we are doing nothing else here decrement the Cur address because why not
                     if(dec_cur_addr_cnt_next) begin
-                        cur_addr_next           =   cur_addr - 1;
+                        cur_addr_next           =   cur_addr + 1'b1;
                         dec_cur_addr_cnt_next   =   1'b0;
                     end    
                 end    
 
                 PHY_STATE_2 :    state_next = WAIT_FOR_ACK;
-                
+
                 //Now we are in the low after a complete Addr send. Release SDA and wait for it to go high again
                 PHY_STATE_3 : begin
                     sda_t_next          =   1'b0;   //Release SDA
@@ -327,35 +339,26 @@ always_comb begin
                         state_next      =   WAIT_FOR_ACK; 
                     //Now we check to see the SDA has been held low by the Slave/Reciever
                     else begin
+                        //Regardless of what happens we need to re-assert control over sda
+                        sda_t_next      =   1'b1;       //Re-assert control over SDA
                         cur_bit_next    =   3'h7;       //Reset the Count regardless of where we go next
+                        
                         //If successful ACK will be low
-                        if(!sda_read_reg) begin
-                            
-                            sda_t_next          =   1'b1;       //Re-assert control over SDA
-                            ack_success_next    =   1'b0;
-                            state_next          =   
-
+                        if(!sda_read_reg) begin    
+                            state_next          =   WRITE_ADDRESS;  //LETS GOOOOO!!!!!!! *Soy Face*
+                            delay_rst_next      =   1'b0;           //Allows for delay again by resetting it
                         end
-
-                    end
-                    
-  
-
-
-                end
-                    //ACK failed, its so jover
-                    else begin
-                        sda_t_next      =   1'b1;           //Re-assert control over SDA
-                        state_next      =   REPEATED_START; 
-                        ack_success_next     
-                        if(cur_addr < 3) begin
-                            cur_addr_next   = Wroit
+                        //ACK Failed, its so jover
+                        else begin
+                            state_next          =   REPEATED_START;
+                            delay_rst_next      =   1'b0;           //Allows for delay again by resetting it
+                            //We failed so if we didn't get to the switch change go back to 0
+                            //If we go through the switch address, go back to the the beginning of the address CLPD
+                            cur_addr_next       =   (cur_addr < 2) ? (2'b00) : (2'b10);
                         end
                     end
-
                 end
             endcase
-
         end
 
 
@@ -472,7 +475,6 @@ always_comb begin
             //When it falls again return to Phy_state_1 
             else 
                 phy_state_next      =   PHY_STATE_1;
-
         end
        
     
