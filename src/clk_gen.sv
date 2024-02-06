@@ -21,7 +21,7 @@ module clk_gen_std_100k(
 );
 
 reg [8:0] cnt = 9'b1_0000_0000;
-//if clk related issues try a syncronous clk this is async for literally no reason  
+//if clk related issues try a syncronous clk this is sync for literally no reason  
 always_ff @(posedge CLK) begin
     if(!rst) begin
         cnt <= {1'b1, 8'h00};     //Reset to Start High to math logic 

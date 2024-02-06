@@ -20,18 +20,23 @@ module fmc_i2c_controller(
     output wire scl_t,
     output wire sda_i,
     output wire sda_t,
-    output wire done_led
+    output wire done_led,
+    output wire [2:0] state_debug,
+    output wire [2:0] phy_state_debug,
+    output wire [2:0] cur_bit_debug,
+    output wire [1:0] cur_addr_debug
 );
 
 //State, well states 
 localparam [2:0]
     IDLE                    =   3'b000,
-    START_SEND              =   3'b001,
-    REPEATED_START          =   3'b010,
-    WRITE_ADDRESS           =   3'b011,
-    WAIT_FOR_ACK            =   3'b100,
-    STOP                    =   3'b101,
-    BOARD_LED               =   3'b110;
+    START_UP                =   3'b001,
+    START_SEND              =   3'b010,
+    REPEATED_START          =   3'b011,
+    WRITE_ADDRESS           =   3'b100,
+    WAIT_FOR_ACK            =   3'b101,
+    STOP                    =   3'b110,
+    BOARD_LED               =   3'b111;
 //Physical State States
 localparam [2:0]
     PHY_IDLE                    =   3'b000,
@@ -52,8 +57,10 @@ reg [4:0][7:0] addr_mem =  {
                            };
 
 //Stuff added by redesign re-org
-reg [1:0]cur_addr = 2'b0;   logic cur_addr_next;
-reg [2:0]cur_bit  = 3'h7;   logic cur_bit_next;
+(* mark_debug = "true" *) reg [1:0]cur_addr = 2'b0;   
+logic [1:0] cur_addr_next;
+(* mark_debug = "true" *) reg [2:0]cur_bit  = 3'h7;  
+logic [2:0] cur_bit_next;
 reg dec_cur_bit_cnt;        logic dec_cur_bit_cnt_next;   
 reg dec_cur_addr_cnt;       logic dec_cur_addr_cnt_next;        //#TODO bro called it Dec address when the value increments 
 reg write_cmpl;             logic write_cmpl_next;
@@ -63,12 +70,13 @@ reg done_reg;               logic done_next;
 reg done_led_on_reg;        logic done_led_on_next;           
 assign done_led = done_led_on_reg;
 
-
+reg bus_ready_reg;          logic bus_ready_next;
 
 wire scl_read_filter;       wire sda_read_filter;
 wire clkgen_rst;
 //Storage Regs and nets fed to regs from comb logic
-reg [2:0] state_reg;        logic [2:0] state_next;
+(* mark_debug = "true" *) reg [2:0] state_reg;        
+logic [2:0] state_next;
 reg scl_t_reg;              logic scl_t_next;
 reg scl_read_reg;           
 reg sda_t_reg;              logic sda_t_next;
@@ -78,7 +86,8 @@ reg rst_clkgen_reg;         logic rst_clkgen_next;
 
 
 /* Logic and Physical State FSM Spacer */ 
-reg [2:0] phy_state_reg;    logic [2:0] phy_state_next;
+(* mark_debug = "true" *) reg [2:0] phy_state_reg;    
+logic [2:0] phy_state_next;
 //Addresses needed To send last two bits of CLPD Addr are a guess based of the doc, change if doesn't work
 reg [6:0] CLPD_ADDR         = 7'b01111_10;
 reg [7:0] CLPD_CTRL_REG     = 8'b0000_0010;
@@ -92,9 +101,10 @@ assign sda_i        =   sda_write_reg;
 assign clkgen_rst   =   rst_clkgen_reg;
 
 
-
+reg scl_i_reg; logic scl_i_next; wire clk_gen_scl_i;
+assign scl_i = scl_i_reg;
 //Instanciate and Connect 100KHz Module. Will flip .scl_i every 100KHz. 
-clk_gen_std_100k SCL_CLK_GEN( .CLK(CLK), .rst(clkgen_rst), .scl_i(scl_i));
+clk_gen_std_100k SCL_CLK_GEN( .CLK(CLK), .rst(clkgen_rst), .scl_i(clk_gen_scl_i));
 
 // Glitch/Noise Filter use to filter the SCL signal read/used by the State machine should be around 50ns (ish)
 ff_filter #( .STAGES(2) ) scl_filter( .clk(CLK), ._in(scl_o), ._out(scl_read_filter) );
@@ -105,32 +115,45 @@ reg delayed_out;     //When 240 ns has passed, this will flip to 1 and we are no
 reg delay_in_reg;  logic delay_in_next;  wire delay_rst; 
 // #TODO HOly shit this code needs to be cleaned up
 assign delay_rst = delay_rst_reg; 
-shift_reg #( .WIDTH(12)) delay_sda_write( CLK, delay_rst, delay_in_reg, delayed_out ); 
+shift_reg #( .WIDTH(5)) delay_sda_write( CLK, delay_rst, delay_in_reg, delayed_out ); 
+
+//Debug stuff
+assign state_debug      = state_reg;
+assign phy_state_debug  = phy_state_reg;
+assign cur_bit_debug    = cur_bit;
+assign cur_addr_debug   = cur_addr; 
 
 // Reset and register storage / procedural logic to coincide with the FSM logic.
 always_ff @(posedge CLK) begin
     //Initial Values 
     if(reset) begin
+        /* Ensure Both States are IDLE */ 
+        state_reg           <=  IDLE;    
+        phy_state_reg       <=  PHY_IDLE;
+
+        scl_i_reg           <=  1'b0;
+
         delay_in_reg        <=  1'b0;
         delay_rst_reg       <=  1'b1;       
         cur_addr            <=  2'b0;
         cur_bit             <=  3'h7;
         done_reg            <=  1'b0;
-        state_reg           <=  IDLE;    
         scl_t_reg           <=  1'b0;
-        scl_read_reg        <=  scl_read_filter;    //Doesn't really matter what it takes on upon reset
         sda_t_reg           <=  1'b0;
         sda_write_reg       <=  1'b0;
-        sda_read_reg        <=  sda_read_filter;
         rst_clkgen_reg      <=  1'b1;               //Active Low
         dec_cur_bit_cnt     <=  1'b0;
         dec_cur_addr_cnt    <=  1'b0;
         write_cmpl          <=  1'b0;
         done_led_on_reg     <=  1'b0;
-        /* Logic and Physical State FSM Spacer */ 
-        phy_state_reg       <=  PHY_IDLE;
+        
+        bus_ready_reg       <=  1'b0;
     end 
     else begin
+        scl_i_reg           <=  scl_i_next;
+
+        bus_ready_reg       <=  bus_ready_next;
+
         delay_in_reg        <=  delay_in_next;
         delay_rst_reg       <=  delay_rst_next;
         cur_addr            <=  cur_addr_next;
@@ -167,39 +190,77 @@ always_comb begin
     write_cmpl_next         =   write_cmpl;
     done_next               =   done_reg;
 
+    scl_i_next              =   scl_i_reg;
+
     delay_rst_next          =   delay_rst_reg;
     done_led_on_next        =   done_led_on_reg;
+
+    bus_ready_next          =   bus_ready_reg;
 
     case(state_reg)
 
         IDLE : begin
-            if(phy_state_reg == PHY_READY && reset == 0) begin
-                state_next          =   START_SEND; 
-            end
-            //Otherwise make sure everything is returned to default
-            else begin 
-                cur_bit_next            =   3'h7;
-                cur_addr_next           =   2'b00;
-                delay_rst_next          =   1'b1;
+            //if(phy_state_reg == PHY_READY) begin
+                state_next          =   START_UP; 
+                //Assert Control over SDA and SCL, SET SDA to one so that it can be brough down
+                sda_t_next          =   1'b1;
+                scl_t_next          =   1'b1;
+                sda_write_next      =   1'b1;
+                
+                rst_clkgen_next     =   1'b0;
+        
+            //end
+            // //Otherwise make sure everything is returned to default
+            // else begin 
+            //     state_next              =   IDLE;
+                
+            //     bus_ready_next          =   1'b0;
+            //     cur_bit_next            =   3'h7;
+            //     cur_addr_next           =   2'b00;
+            //     delay_rst_next          =   1'b1;
 
-                state_next              =   IDLE;
-                scl_t_next              =   1'b0;
-                sda_t_next              =   1'b0;
-                rst_clkgen_next         =   1'b1;
-                dec_cur_bit_cnt_next    =   1'b0;
-                dec_cur_addr_cnt_next   =   1'b0;
+            //     scl_t_next              =   1'b0;
+            //     sda_t_next              =   1'b0;
+            //     rst_clkgen_next         =   1'b1;
+            //     dec_cur_bit_cnt_next    =   1'b0;
+            //     dec_cur_addr_cnt_next   =   1'b0;
 
+            //     scl_i_next              =   1'b0;
+            // end
+        end
+
+        /* Point of this State is to get  */  
+        START_UP : begin
+            state_next      =   START_UP;
+            //First time we enter turn of the CLK Reset
+            if(!rst_clkgen_reg) begin
+                state_next          =   START_UP;
+                rst_clkgen_next     =   1'b1;
             end
+            else begin
+                //Now we make it so that the output of the clock gen is the output for SCL
+                scl_i_next          =   clk_gen_scl_i;
+                //When the filter tells us that both are high, we can go and send the start bit
+                if(sda_read_reg && scl_read_reg) begin
+                    state_next      =   START_SEND;
+                    bus_ready_next  =   1'b1;  
+                end
+            end
+
+
+
         end
 
         /* Set _t's to '1' so that 'Write' is put onto the IO, Reset Clk Gen, & set SDA low */  
         START_SEND : begin    
             state_next          =   WRITE_ADDRESS;
-            scl_t_next          =   1'b1;           //Output CLK Gen onto IO pin 
-            sda_t_next          =   1'b1;           //Write the writes to the Pins
+
+            cur_bit_next        =   3'h7;
+            cur_addr_next       =   2'b00;
+
+            
             sda_write_next      =   1'b0;           //Set SDA Low
             
-            rst_clkgen_next     =   1'b0;           //Reset, reset fires on low
             write_cmpl_next     =   1'b0;
 
             delay_rst_next      =   1'b0;
@@ -236,13 +297,15 @@ always_comb begin
         end
 
         WRITE_ADDRESS   : begin
-            //First time we enter turn of the CLK Reset
-            if(!rst_clkgen_reg) begin
-                state_next          = WRITE_ADDRESS;
-                rst_clkgen_next     = 1'b1;
-            end
+            // //First time we enter turn of the CLK Reset
+            // if(!rst_clkgen_reg) begin
+            //     state_next          = WRITE_ADDRESS;
+            //     rst_clkgen_next     = 1'b1;
+            // end
 
             case(phy_state_reg) 
+                PHY_IDLE      :     state_next = WRITE_ADDRESS;  //Still in startup
+                PHY_READY     :     state_next = WRITE_ADDRESS;  //Still in startup
                 PHY_START_BIT :     state_next = WRITE_ADDRESS;  //Still in startup
                 
                 //The Line is ready, wait for delay and set a SDA Bit.
@@ -402,11 +465,11 @@ always_comb begin
     case(phy_state_reg) 
         /** Physical State is in IDLE when RESET is Triggered, I.E we don't want to do anything Yet */
         PHY_IDLE : begin
-            if(reset == 1) 
-                phy_state_next      =   PHY_IDLE;
+            if(bus_ready_reg == 1) 
+                phy_state_next      =   PHY_READY;
             //When out of Reset we can go on to the READY
             else 
-                phy_state_next      =   PHY_READY;
+                phy_state_next      =   PHY_IDLE;
         end
 
         /** Ready to rock, indicates to the other state machine we are good to go and it can enter start
